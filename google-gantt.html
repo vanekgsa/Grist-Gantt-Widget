@@ -1,44 +1,57 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Gantt Chart Example</title>
-    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
-    <script type="text/javascript">
-      google.charts.load('current', {'packages':['gantt']});
-      google.charts.setOnLoadCallback(drawChart);
-
-      function drawChart() {
-        var data = new google.visualization.DataTable();
-        data.addColumn('string', 'Task ID');
-        data.addColumn('string', 'Task Name');
-        data.addColumn('string', 'Resource');
-        data.addColumn('date', 'Start Date');
-        data.addColumn('date', 'End Date');
-        data.addColumn('number', 'Duration');
-        data.addColumn('number', 'Percent Complete');
-        data.addColumn('string', 'Dependencies');
-
-        data.addRows([
-          ['Task 1', 'Task 1', 'Resource 1', new Date(2023, 1, 1), new Date(2023, 1, 5), null, 100, null],
-          ['Task 2', 'Task 2', 'Resource 2', new Date(2023, 1, 6), new Date(2023, 1, 10), null, 50, 'Task 1'],
-          ['Task 3', 'Task 3', 'Resource 3', new Date(2023, 1, 11), new Date(2023, 1, 15), null, 0, 'Task 2']
-        ]);
-
-        var options = {
-          height: 275,
-          gantt: {
-            trackHeight: 30
-          }
-        };
-
-        var chart = new google.visualization.Gantt(document.getElementById('chart_div'));
-
-        chart.draw(data, options);
-      }
-    </script>
+    <title>onRecord</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
   </head>
   <body>
-    <div id="chart_div"></div>
+    <div id="gantt-chart"></div>
+    <script>
+      grist.ready();
+      grist.onRecord(function(record) {
+        var data = JSON.parse(record.data);
+
+        // Define the dimensions of the chart
+        var margin = {top: 20, right: 20, bottom: 20, left: 40},
+            width = 960 - margin.left - margin.right,
+            height = 500 - margin.top - margin.bottom;
+
+        // Define the scales for the chart
+        var x = d3.scaleTime().range([0, width]);
+        var y = d3.scaleBand().rangeRound([0, height]).padding(0.1);
+
+        // Define the svg element to render the chart
+        var svg = d3.select("#gantt-chart").append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+        // Define the y-axis
+        y.domain(data.map(function(d) { return d.task; }));
+        svg.append("g")
+            .attr("class", "y axis")
+            .call(d3.axisLeft(y));
+
+        // Define the x-axis
+        x.domain([d3.min(data, function(d) { return d.start; }), d3.max(data, function(d) { return d.end; })]);
+        svg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(x));
+
+        // Add the bars to the chart
+        svg.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function(d) { return x(d.start); })
+            .attr("width", function(d) { return x(d.end) - x(d.start); })
+            .attr("y", function(d) { return y(d.task); })
+            .attr("height", y.bandwidth());
+      });
+    </script>
   </body>
 </html>
