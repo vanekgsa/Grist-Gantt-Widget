@@ -325,308 +325,279 @@
       'Low': 'priority-low'
     };
     
-    const ProjectWidget = () => {
-      const [view, setView] = useState('kanban'); // 'kanban' or 'gantt'
-      const [records, setRecords] = useState([]);
-      const [mappings, setMappings] = useState(null);
-      const [loading, setLoading] = useState(true);
-      const [error, setError] = useState(null);
-      const [draggedItem, setDraggedItem] = useState(null);
-      
-      // Column mapping configuration
-      const requiredColumns = [
+ const ProjectWidget = () => {
+  const [view, setView] = useState('kanban');
+  const [records, setRecords] = useState([]);
+  const [mappings, setMappings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [draggedItem, setDraggedItem] = useState(null);
+
+  // Helper to safely format dates
+  const formatDate = (dateVal) => {
+    if (!dateVal) return '';
+    // Handle both Date objects and ISO strings
+    const date = dateVal instanceof Date ? dateVal : new Date(dateVal);
+    if (isNaN(date.getTime())) return String(dateVal); // Fallback
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // Helper to get date for calculations (ensures Date object)
+  const getDate = (dateVal) => {
+    if (!dateVal) return null;
+    return dateVal instanceof Date ? dateVal : new Date(dateVal);
+  };
+
+  useEffect(() => {
+    grist.ready({
+      columns: [
         { name: 'TaskName', title: 'Task Name', type: 'Text' },
         { name: 'Status', title: 'Status', type: 'Choice' },
         { name: 'StartDate', title: 'Start Date', type: 'Date' },
         { name: 'EndDate', title: 'End Date', type: 'Date' },
         { name: 'Assignee', title: 'Assignee', type: 'Text', optional: true },
         { name: 'Priority', title: 'Priority', type: 'Choice', optional: true }
-      ];
-      
-      useEffect(() => {
-        // Initialize Grist
-        grist.ready({
-          columns: requiredColumns,
-          requiredAccess: 'full',
-          allowSelectBy: true
-        });
-        
-        // Subscribe to records
-        grist.onRecords((data, colMappings) => {
-          const mapped = grist.mapColumnNames(data);
-          if (mapped) {
-            setRecords(Array.isArray(mapped) ? mapped : [mapped]);
-            setMappings(colMappings);
-            setLoading(false);
-          } else {
-            setError('Please map all required columns in the widget configuration');
-            setLoading(false);
-          }
-        }, { format: 'rows' });
-        
-        // Handle options
-        grist.onOptions((options) => {
-          if (options?.defaultView) {
-            setView(options.defaultView);
-          }
-        });
-      }, []);
-      
-      // Update task status (for Kanban drag-drop)
-      const updateTaskStatus = async (taskId, newStatus) => {
-        try {
-          const table = grist.selectedTable;
-          await table.update({
-            id: taskId,
-            fields: { [mappings.Status]: newStatus }
-          });
-        } catch (err) {
-          console.error('Failed to update status:', err);
-          setError('Failed to update task status');
+      ],
+      requiredAccess: 'full'
+    });
+    
+    grist.onRecords((data, colMappings) => {
+      try {
+        const mapped = grist.mapColumnNames(data);
+        if (mapped) {
+          // Ensure we have an array and dates are handled
+          const recordsArray = Array.isArray(mapped) ? mapped : [mapped];
+          setRecords(recordsArray);
+          setMappings(colMappings);
+          setLoading(false);
+        } else {
+          setError('Please map all required columns in widget options');
+          setLoading(false);
         }
-      };
-      
-      // Update task dates (for Gantt drag-drop)
-      const updateTaskDates = async (taskId, startDate, endDate) => {
-        try {
-          const table = grist.selectedTable;
-          await table.update({
-            id: taskId,
-            fields: {
-              [mappings.StartDate]: startDate,
-              [mappings.EndDate]: endDate
-            }
-          });
-        } catch (err) {
-          console.error('Failed to update dates:', err);
-          setError('Failed to update task dates');
+      } catch (err) {
+        console.error('Error processing records:', err);
+        setError('Error: ' + err.message);
+        setLoading(false);
+      }
+    }, { format: 'rows' });
+  }, []);
+
+  const updateTaskStatus = async (taskId, newStatus) => {
+    try {
+      const table = grist.selectedTable;
+      await table.update({
+        id: taskId,
+        fields: { [mappings.Status]: newStatus }
+      });
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      setError('Failed to update task status');
+    }
+  };
+
+  const updateTaskDates = async (taskId, startDate, endDate) => {
+    try {
+      const table = grist.selectedTable;
+      await table.update({
+        id: taskId,
+        fields: {
+          [mappings.StartDate]: startDate,
+          [mappings.EndDate]: endDate
         }
-      };
+      });
+    } catch (err) {
+      console.error('Failed to update dates:', err);
+    }
+  };
+
+  // Drag handlers remain the same...
+  const handleDragStart = (e, task) => {
+    setDraggedItem(task);
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.classList.add('dragging');
+  };
+  
+  const handleDragEnd = (e) => {
+    e.target.classList.remove('dragging');
+    setDraggedItem(null);
+  };
+  
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  
+  const handleDrop = async (e, newStatus) => {
+    e.preventDefault();
+    if (draggedItem && draggedItem.Status !== newStatus) {
+      await updateTaskStatus(draggedItem.id, newStatus);
+    }
+  };
+
+  const getTasksByStatus = () => {
+    const statuses = [...new Set(records.map(r => r.Status).filter(Boolean))];
+    const grouped = {};
+    statuses.forEach(status => {
+      grouped[status] = records.filter(r => r.Status === status);
+    });
+    return grouped;
+  };
+
+  const getGanttRange = () => {
+    if (records.length === 0) return { start: new Date(), end: new Date() };
+    const dates = records.flatMap(r => [getDate(r.StartDate), getDate(r.EndDate)]).filter(Boolean);
+    const min = new Date(Math.min(...dates));
+    const max = new Date(Math.max(...dates));
+    min.setMonth(min.getMonth() - 1);
+    max.setMonth(max.getMonth() + 1);
+    return { start: min, end: max };
+  };
+
+  const getMonths = () => {
+    const { start, end } = getGanttRange();
+    const months = [];
+    const current = new Date(start);
+    while (current <= end) {
+      months.push(new Date(current));
+      current.setMonth(current.getMonth() + 1);
+    }
+    return months;
+  };
+
+  const getBarStyle = (task) => {
+    const { start } = getGanttRange();
+    const taskStart = getDate(task.StartDate);
+    const taskEnd = getDate(task.EndDate);
+    
+    if (!taskStart || !taskEnd) return { display: 'none' };
+    
+    const totalDays = (getGanttRange().end - getGanttRange().start) / (1000 * 60 * 60 * 24);
+    const offsetDays = (taskStart - start) / (1000 * 60 * 60 * 24);
+    const durationDays = (taskEnd - taskStart) / (1000 * 60 * 60 * 24) + 1;
+    
+    const leftPercent = (offsetDays / totalDays) * 100;
+    const widthPercent = (durationDays / totalDays) * 100;
+    
+    return {
+      left: `${leftPercent}%`,
+      width: `${Math.max(widthPercent, 2)}%`,
+      backgroundColor: STATUS_COLORS[task.Status] || '#757575'
+    };
+  };
+
+  if (loading) return <div className="loading"><i className="fas fa-spinner fa-spin"></i> Loading...</div>;
+  if (error) return <div className="error"><i className="fas fa-exclamation-triangle"></i> {error}</div>;
+  
+  const tasksByStatus = getTasksByStatus();
+  const months = getMonths();
+
+  return (
+    <div className="widget-container">
+      <div className="toolbar">
+        <h2><i className="fas fa-project-diagram"></i> Project Manager</h2>
+        <div className="view-toggle">
+          <button 
+            className={`view-btn ${view === 'kanban' ? 'active' : ''}`}
+            onClick={() => setView('kanban')}
+          >
+            <i className="fas fa-columns"></i> Kanban
+          </button>
+          <button 
+            className={`view-btn ${view === 'gantt' ? 'active' : ''}`}
+            onClick={() => setView('gantt')}
+          >
+            <i className="fas fa-stream"></i> Gantt
+          </button>
+        </div>
+      </div>
       
-      // Kanban Drag and Drop handlers
-      const handleDragStart = (e, task) => {
-        setDraggedItem(task);
-        e.dataTransfer.effectAllowed = 'move';
-        e.target.classList.add('dragging');
-      };
-      
-      const handleDragEnd = (e) => {
-        e.target.classList.remove('dragging');
-        setDraggedItem(null);
-      };
-      
-      const handleDragOver = (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-      };
-      
-      const handleDrop = async (e, newStatus) => {
-        e.preventDefault();
-        if (draggedItem && draggedItem.Status !== newStatus) {
-          await updateTaskStatus(draggedItem.id, newStatus);
-        }
-      };
-      
-      // Group tasks by status for Kanban
-      const getTasksByStatus = () => {
-        const statuses = [...new Set(records.map(r => r.Status).filter(Boolean))];
-        const grouped = {};
-        statuses.forEach(status => {
-          grouped[status] = records.filter(r => r.Status === status);
-        });
-        return grouped;
-      };
-      
-      // Calculate Gantt chart positioning
-      const getGanttRange = () => {
-        if (records.length === 0) return { start: new Date(), end: new Date() };
-        const dates = records.flatMap(r => [r.StartDate, r.EndDate]).filter(Boolean);
-        const min = new Date(Math.min(...dates));
-        const max = new Date(Math.max(...dates));
-        // Add padding
-        min.setMonth(min.getMonth() - 1);
-        max.setMonth(max.getMonth() + 1);
-        return { start: min, end: max };
-      };
-      
-      const getMonths = () => {
-        const { start, end } = getGanttRange();
-        const months = [];
-        const current = new Date(start);
-        while (current <= end) {
-          months.push(new Date(current));
-          current.setMonth(current.getMonth() + 1);
-        }
-        return months;
-      };
-      
-      const getBarStyle = (task) => {
-        const { start } = getGanttRange();
-        const taskStart = new Date(task.StartDate);
-        const taskEnd = new Date(task.EndDate);
-        const totalDays = (getGanttRange().end - getGanttRange().start) / (1000 * 60 * 60 * 24);
-        const offsetDays = (taskStart - start) / (1000 * 60 * 60 * 24);
-        const durationDays = (taskEnd - taskStart) / (1000 * 60 * 60 * 24) + 1;
-        
-        const leftPercent = (offsetDays / totalDays) * 100;
-        const widthPercent = (durationDays / totalDays) * 100;
-        
-        return {
-          left: `${leftPercent}%`,
-          width: `${Math.max(widthPercent, 2)}%`,
-          backgroundColor: STATUS_COLORS[task.Status] || '#757575'
-        };
-      };
-      
-      // Gantt drag handlers
-      const handleGanttDragStart = (e, task) => {
-        setDraggedItem(task);
-        e.target.classList.add('dragging');
-        e.dataTransfer.setData('text/plain', JSON.stringify({
-          id: task.id,
-          type: 'gantt',
-          startX: e.clientX
-        }));
-      };
-      
-      const handleGanttDrop = async (e, rowId) => {
-        e.preventDefault();
-        const task = records.find(r => r.id === rowId);
-        if (!task || !draggedItem) return;
-        
-        const data = JSON.parse(e.dataTransfer.getData('text/plain') || '{}');
-        if (data.type === 'gantt') {
-          // Calculate new dates based on drop position
-          const { start } = getGanttRange();
-          const totalDays = (getGanttRange().end - start) / (1000 * 60 * 60 * 24);
-          
-          // Simplified: move by 1 day for demo
-          const currentStart = new Date(task.StartDate);
-          const currentEnd = new Date(task.EndDate);
-          const duration = (currentEnd - currentStart) / (1000 * 60 * 60 * 24);
-          
-          currentStart.setDate(currentStart.getDate() + 1);
-          currentEnd.setDate(currentStart.getDate() + duration);
-          
-          await updateTaskDates(task.id, currentStart.toISOString().split('T')[0], currentEnd.toISOString().split('T')[0]);
-        }
-      };
-      
-      if (loading) return <div className="loading"><i className="fas fa-spinner fa-spin"></i> Loading...</div>;
-      if (error) return <div className="error"><i className="fas fa-exclamation-triangle"></i> {error}</div>;
-      
-      const tasksByStatus = getTasksByStatus();
-      const months = getMonths();
-      
-      return (
-        <div className="widget-container">
-          <div className="toolbar">
-            <h2><i className="fas fa-project-diagram"></i> Project Manager</h2>
-            <div className="view-toggle">
-              <button 
-                className={`view-btn ${view === 'kanban' ? 'active' : ''}`}
-                onClick={() => setView('kanban')}
+      <div className="main-content">
+        {view === 'kanban' ? (
+          <div className="kanban-board">
+            {Object.entries(tasksByStatus).map(([status, tasks]) => (
+              <div 
+                key={status} 
+                className="kanban-column"
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, status)}
               >
-                <i className="fas fa-columns"></i> Kanban
-              </button>
-              <button 
-                className={`view-btn ${view === 'gantt' ? 'active' : ''}`}
-                onClick={() => setView('gantt')}
-              >
-                <i className="fas fa-stream"></i> Gantt
-              </button>
-            </div>
-          </div>
-          
-          <div className="main-content">
-            {view === 'kanban' ? (
-              <div className="kanban-board">
-                {Object.entries(tasksByStatus).map(([status, tasks]) => (
-                  <div 
-                    key={status} 
-                    className="kanban-column"
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, status)}
-                  >
-                    <div className="column-header" style={{borderBottomColor: STATUS_COLORS[status] || '#ddd'}}>
-                      <span>{status}</span>
-                      <span className="column-count">{tasks.length}</span>
-                    </div>
-                    <div className="kanban-tasks drop-zone">
-                      {tasks.map(task => (
-                        <div
-                          key={task.id}
-                          className="kanban-card"
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, task)}
-                          onDragEnd={handleDragEnd}
-                          style={{borderLeftColor: STATUS_COLORS[task.Status] || '#ddd'}}
-                        >
-                          <div className="card-title">{task.TaskName}</div>
-                          <div className="card-meta">
-                            <span><i className="fas fa-user"></i> {task.Assignee || 'Unassigned'}</span>
-                            {task.Priority && (
-                              <span className={`priority-badge ${PRIORITY_COLORS[task.Priority] || ''}`}>
-                                {task.Priority}
-                              </span>
-                            )}
-                          </div>
-                          {(task.StartDate || task.EndDate) && (
-                            <div className="card-dates">
-                              <span><i className="fas fa-calendar-alt"></i> {task.StartDate} - {task.EndDate}</span>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="gantt-container">
-                <div className="gantt-header">
-                  <div className="task-column">Task Name</div>
-                  <div className="timeline-header">
-                    {months.map((month, idx) => (
-                      <div key={idx} className="month-header">
-                        {month.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                      </div>
-                    ))}
-                  </div>
+                <div className="column-header" style={{borderBottomColor: STATUS_COLORS[status] || '#ddd'}}>
+                  <span>{status}</span>
+                  <span className="column-count">{tasks.length}</span>
                 </div>
-                <div className="gantt-body">
-                  {records.map(task => (
-                    <div key={task.id} className="gantt-row">
-                      <div className="gantt-task-name">{task.TaskName}</div>
-                      <div 
-                        className="gantt-timeline"
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleGanttDrop(e, task.id)}
-                      >
-                        {task.StartDate && task.EndDate && (
-                          <div
-                            className="gantt-bar"
-                            style={getBarStyle(task)}
-                            draggable
-                            onDragStart={(e) => handleGanttDragStart(e, task)}
-                            onDragEnd={handleDragEnd}
-                            title={`${task.TaskName}: ${task.StartDate} to ${task.EndDate}`}
-                          >
-                            {task.TaskName}
-                            <div className="resize-handle"></div>
-                          </div>
+                <div className="kanban-tasks drop-zone">
+                  {tasks.map(task => (
+                    <div
+                      key={task.id}
+                      className="kanban-card"
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, task)}
+                      onDragEnd={handleDragEnd}
+                      style={{borderLeftColor: STATUS_COLORS[task.Status] || '#ddd'}}
+                    >
+                      <div className="card-title">{task.TaskName}</div>
+                      <div className="card-meta">
+                        <span><i className="fas fa-user"></i> {task.Assignee || 'Unassigned'}</span>
+                        {task.Priority && (
+                          <span className={`priority-badge ${PRIORITY_COLORS[task.Priority] || ''}`}>
+                            {task.Priority}
+                          </span>
                         )}
                       </div>
+                      {/* FIXED: Convert dates to strings before rendering */}
+                      {(task.StartDate || task.EndDate) && (
+                        <div className="card-dates">
+                          <span>
+                            <i className="fas fa-calendar-alt"></i> {formatDate(task.StartDate)} - {formatDate(task.EndDate)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
-            )}
+            ))}
           </div>
-        </div>
-      );
-    };
-    
+        ) : (
+          <div className="gantt-container">
+            <div className="gantt-header">
+              <div className="task-column">Task Name</div>
+              <div className="timeline-header">
+                {months.map((month, idx) => (
+                  <div key={idx} className="month-header">
+                    {month.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="gantt-body">
+              {records.map(task => (
+                <div key={task.id} className="gantt-row">
+                  <div className="gantt-task-name">{task.TaskName}</div>
+                  <div className="gantt-timeline">
+                    {task.StartDate && task.EndDate && (
+                      <div
+                        className="gantt-bar"
+                        style={getBarStyle(task)}
+                        draggable
+                        title={`${task.TaskName}: ${formatDate(task.StartDate)} to ${formatDate(task.EndDate)}`}
+                      >
+                        {task.TaskName}
+                        <div className="resize-handle"></div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
     ReactDOM.createRoot(document.getElementById('root')).render(<ProjectWidget />);
   </script>
 </body>
