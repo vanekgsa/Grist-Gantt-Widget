@@ -45,8 +45,7 @@
     .gantt-bar { position: absolute; height: 32px; border-radius: 6px; top: 9px; display: flex; align-items: center; padding: 0 12px; color: white; font-size: 12px; font-weight: 500; box-shadow: 0 2px 4px rgba(0,0,0,0.2); cursor: grab; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .loading { display: flex; justify-content: center; align-items: center; height: 100%; font-size: 18px; color: #666; }
     .error { padding: 20px; background: #ffebee; color: #c62828; border-radius: 8px; margin: 20px; white-space: pre-wrap; }
-    .config-panel { background: #fff3e0; border: 1px solid #ffb74d; padding: 15px; margin: 10px; border-radius: 8px; font-size: 14px; }
-    .config-panel button { margin-left: 10px; padding: 5px 10px; cursor: pointer; }
+    .status-badge { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; }
   </style>
 </head>
 <body>
@@ -55,14 +54,6 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
     
-    const STATUS_COLORS = {
-      'To Do': '#9e9e9e',
-      'In Progress': '#2196F3',
-      'Review': '#FF9800',
-      'Done': '#4CAF50',
-      'Blocked': '#f44336'
-    };
-
     const PRIORITY_CLASSES = {
       'High': 'priority-high',
       'Medium': 'priority-medium',
@@ -83,14 +74,34 @@
       return isNaN(d.getTime()) ? null : d;
     };
 
+    // CRITICAL: Convert column-oriented data to row-oriented array
+    const columnsToRows = (colData) => {
+      if (!colData || typeof colData !== 'object') return [];
+      if (Array.isArray(colData)) return colData; // Already rows
+      
+      const columns = Object.keys(colData);
+      if (columns.length === 0) return [];
+      
+      const rowCount = colData[columns[0]].length;
+      const rows = [];
+      
+      for (let i = 0; i < rowCount; i++) {
+        const row = {};
+        columns.forEach(col => {
+          row[col] = colData[col][i];
+        });
+        rows.push(row);
+      }
+      return rows;
+    };
+
     const ProjectWidget = () => {
       const [view, setView] = useState('kanban');
       const [records, setRecords] = useState([]);
+      const [statuses, setStatuses] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [draggedId, setDraggedId] = useState(null);
-      const [allStatuses, setAllStatuses] = useState([]); // Store all possible statuses
-      const [showConfig, setShowConfig] = useState(false);
 
       useEffect(() => {
         grist.ready({
@@ -105,52 +116,83 @@
           requiredAccess: 'full'
         });
 
-        // Load saved statuses from widget options
-        grist.onOptions((options) => {
-          if (options?.statuses) {
-            setAllStatuses(options.statuses);
-          } else {
-            // Default statuses if not configured
-            setAllStatuses(['To Do', 'In Progress', 'Review', 'Done']);
-          }
-        });
-
-        grist.onRecords((data) => {
+        // Fetch both tasks AND statuses
+        const loadData = async () => {
           try {
-            const mapped = grist.mapColumnNames(data);
-            if (!mapped) {
-              setError('Please map columns in widget options');
-              setLoading(false);
-              return;
+            // 1. Fetch statuses from Status table
+            let statusRows = [];
+            try {
+              const statusResult = await grist.docApi.fetchTable("Status");
+              console.log('Raw status result:', statusResult);
+              
+              // Convert columns format to rows format
+              const statusData = columnsToRows(statusResult);
+              console.log('Converted to rows:', statusData);
+              
+              // Sort by Order if available
+              statusRows = statusData.sort((a, b) => {
+                const orderA = a.Order || 0;
+                const orderB = b.Order || 0;
+                return orderA - orderB;
+              });
+              
+              console.log('Sorted statuses:', statusRows);
+            } catch (e) {
+              console.warn('Could not load Status table:', e);
+              // Fallback to default statuses
+              statusRows = [
+                { Status: 'To Do', Color: '#9e9e9e', Order: 1 },
+                { Status: 'In Progress', Color: '#2196F3', Order: 2 },
+                { Status: 'Review', Color: '#FF9800', Order: 3 },
+                { Status: 'Done', Color: '#4CAF50', Order: 4 }
+              ];
             }
 
-            const rows = Array.isArray(mapped) ? mapped : [mapped];
-            const processed = rows.map(r => ({
-              id: r.id,
-              TaskName: str(r.TaskName),
-              Status: str(r.Status),
-              StartDate: toDate(r.StartDate),
-              EndDate: toDate(r.EndDate),
-              StartDateStr: str(r.StartDate),
-              EndDateStr: str(r.EndDate),
-              Assignee: str(r.Assignee),
-              Priority: str(r.Priority)
-            }));
+            setStatuses(statusRows);
 
-            setRecords(processed);
-            setLoading(false);
+            // 2. Subscribe to task records
+            grist.onRecords((data) => {
+              try {
+                const mapped = grist.mapColumnNames(data);
+                if (!mapped) {
+                  setError('Please map columns in widget options');
+                  setLoading(false);
+                  return;
+                }
+
+                const rows = Array.isArray(mapped) ? mapped : [mapped];
+                const processed = rows.map(r => ({
+                  id: r.id,
+                  TaskName: str(r.TaskName),
+                  Status: str(r.Status),
+                  StartDate: toDate(r.StartDate),
+                  EndDate: toDate(r.EndDate),
+                  StartDateStr: str(r.StartDate),
+                  EndDateStr: str(r.EndDate),
+                  Assignee: str(r.Assignee),
+                  Priority: str(r.Priority)
+                }));
+
+                setRecords(processed);
+                setLoading(false);
+              } catch (err) {
+                setError('Error: ' + err.message);
+                setLoading(false);
+              }
+            }, { format: 'rows' });
+
           } catch (err) {
-            setError('Error: ' + err.message);
+            setError('Failed to initialize: ' + err.message);
             setLoading(false);
           }
-        }, { format: 'rows' });
+        };
+
+        loadData();
       }, []);
 
-      // Save statuses to widget options
-      const saveStatuses = (statuses) => {
-        grist.setOptions({ statuses });
-        setAllStatuses(statuses);
-        setShowConfig(false);
+      const getStatusColor = (statusName) => {
+        const status = statuses.find(s => s.Status === statusName);
+        return status?.Color || '#757575';
       };
 
       const updateStatus = async (id, newStatus) => {
@@ -164,18 +206,21 @@
         }
       };
 
-      // Group by status, but include ALL statuses even if empty
+      // Group by status, including ALL statuses from Status table
       const byStatus = () => {
         const grouped = {};
+        
         // Initialize all statuses with empty arrays
-        allStatuses.forEach(status => {
-          grouped[status] = [];
+        statuses.forEach(status => {
+          if (status.IsActive !== false) {
+            grouped[status.Status] = [];
+          }
         });
         
         // Fill in tasks
         records.forEach(r => {
           const s = r.Status || 'Uncategorized';
-          if (!grouped[s]) grouped[s] = []; // In case there's a status not in our list
+          if (!grouped[s]) grouped[s] = [];
           grouped[s].push(r);
         });
         
@@ -214,7 +259,7 @@
         return {
           left: (offset / total * 100) + '%',
           width: Math.max(duration / total * 100, 2) + '%',
-          backgroundColor: STATUS_COLORS[task.Status] || '#757575'
+          backgroundColor: getStatusColor(task.Status)
         };
       };
 
@@ -228,40 +273,11 @@
         <div className="widget-container">
           <div className="toolbar">
             <h2>Project Manager</h2>
-            <div style={{display: 'flex', gap: '10px'}}>
-              <button onClick={() => setShowConfig(!showConfig)} style={{padding: '6px 12px', cursor: 'pointer'}}>
-                ⚙️ Columns
-              </button>
-              <div className="view-toggle">
-                <button className={view === 'kanban' ? 'view-btn active' : 'view-btn'} onClick={() => setView('kanban')}>Kanban</button>
-                <button className={view === 'gantt' ? 'view-btn active' : 'view-btn'} onClick={() => setView('gantt')}>Gantt</button>
-              </div>
+            <div className="view-toggle">
+              <button className={view === 'kanban' ? 'view-btn active' : 'view-btn'} onClick={() => setView('kanban')}>Kanban</button>
+              <button className={view === 'gantt' ? 'view-btn active' : 'view-btn'} onClick={() => setView('gantt')}>Gantt</button>
             </div>
           </div>
-
-          {showConfig && (
-            <div className="config-panel">
-              <strong>Configure Status Columns:</strong>
-              <div style={{marginTop: '10px'}}>
-                <input 
-                  type="text" 
-                  defaultValue={allStatuses.join(', ')}
-                  id="statusInput"
-                  style={{width: '300px', padding: '5px'}}
-                  placeholder="To Do, In Progress, Done"
-                />
-                <button onClick={() => {
-                  const input = document.getElementById('statusInput').value;
-                  const statuses = input.split(',').map(s => s.trim()).filter(Boolean);
-                  saveStatuses(statuses);
-                }}>
-                  Save
-                </button>
-                <button onClick={() => setShowConfig(false)}>Cancel</button>
-              </div>
-              <small>Enter column names separated by commas</small>
-            </div>
-          )}
 
           <div className="main-content">
             {view === 'kanban' ? (
@@ -277,8 +293,11 @@
                       if (draggedId) updateStatus(draggedId, status);
                     }}
                   >
-                    <div className="column-header" style={{borderBottomColor: STATUS_COLORS[status] || '#ddd'}}>
-                      <span>{status}</span>
+                    <div className="column-header" style={{borderBottomColor: getStatusColor(status)}}>
+                      <span>
+                        <span className="status-badge" style={{backgroundColor: getStatusColor(status)}}></span>
+                        {status}
+                      </span>
                       <span className="column-count">{tasks.length}</span>
                     </div>
                     <div className="kanban-tasks">
@@ -290,7 +309,7 @@
                             key={task.id} 
                             className="kanban-card" 
                             draggable
-                            style={{borderLeftColor: STATUS_COLORS[task.Status] || '#ddd'}}
+                            style={{borderLeftColor: getStatusColor(task.Status)}}
                             onDragStart={() => setDraggedId(task.id)}
                             onDragEnd={() => setDraggedId(null)}
                           >
