@@ -98,7 +98,7 @@
     const ProjectWidget = () => {
       const [view, setView] = useState('kanban');
       const [records, setRecords] = useState([]);
-      const [statuses, setStatuses] = useState([]); // Теперь храним полные объекты с id
+      const [statuses, setStatuses] = useState([]); // Массив статусов с id и текстом
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [draggedId, setDraggedId] = useState(null);
@@ -129,7 +129,7 @@
               
               // Сортируем по Order
               statusRows = statusData.sort((a, b) => (a.Order || 0) - (b.Order || 0));
-              console.log('Sorted statuses with IDs:', statusRows);
+              console.log('Sorted statuses:', statusRows);
               
             } catch (e) {
               console.warn('Could not load Status table:', e);
@@ -154,25 +154,24 @@
 
                 const rows = Array.isArray(mapped) ? mapped : [mapped];
                 
-                // Важно: Status теперь может быть объектом {id, ...} или числом (ID)
+                // Обрабатываем Reference колонку Status
                 const processed = rows.map(r => {
-                  // Определяем ID статуса и текст статуса
                   let statusId = null;
                   let statusText = '';
                   
+                  // Status может прийти как объект, число или строка
                   if (r.Status && typeof r.Status === 'object') {
-                    // Status пришел как объект с полями
+                    // Объект с полями (обычно приходит как {id: 123, Status: "Name"})
                     statusId = r.Status.id || r.Status.Id;
                     statusText = r.Status.Status || r.Status.Name || str(r.Status);
                   } else if (typeof r.Status === 'number') {
-                    // Status пришел как число (ID)
+                    // Число - это ID статуса
                     statusId = r.Status;
-                    // Найдем текст статуса по ID
                     const found = statusRows.find(s => s.id === statusId);
                     statusText = found ? found.Status : String(statusId);
                   } else {
+                    // Строка или другое
                     statusText = str(r.Status);
-                    // Попробуем найти ID по тексту
                     const found = statusRows.find(s => s.Status === statusText);
                     statusId = found ? found.id : null;
                   }
@@ -181,7 +180,7 @@
                     id: r.id,
                     TaskName: str(r.TaskName),
                     StatusId: statusId,      // ID для обновления
-                    StatusText: statusText,   // Текст для отображения
+                    StatusText: statusText,     // Текст для отображения
                     StartDate: toDate(r.StartDate),
                     EndDate: toDate(r.EndDate),
                     StartDateStr: str(r.StartDate),
@@ -215,28 +214,26 @@
         return status?.Color || '#757575';
       };
 
-      // Получаем ID статуса по тексту
-      const getStatusId = (statusText) => {
-        const status = statuses.find(s => s.Status === statusText);
-        return status?.id || null;
-      };
-
-      // ОБНОВЛЕНИЕ: записываем ID статуса, а не текст!
+      // КРИТИЧЕСКИ ВАЖНО: Обновляем используя ID статуса, не текст!
       const updateStatus = async (taskId, newStatusText) => {
         try {
-          const statusId = getStatusId(newStatusText);
-          console.log('Updating task', taskId, 'to status', newStatusText, 'ID:', statusId);
-          
-          if (!statusId) {
-            setError('Status ID not found for: ' + newStatusText);
+          // Находим ID статуса по тексту
+          const statusObj = statuses.find(s => s.Status === newStatusText);
+          if (!statusObj) {
+            setError('Status not found: ' + newStatusText);
             return;
           }
 
-          // Записываем ID (число), а не текст!
+          const statusId = statusObj.id;
+          console.log('Updating task', taskId, 'to status ID:', statusId, '(', newStatusText, ')');
+
+          // Для Reference колонки отправляем ЧИСЛО (ID), не текст!
           await grist.selectedTable.update({
             id: taskId,
-            fields: { Status: statusId }
+            fields: { Status: statusId }  // <-- ЧИСЛО, не строка!
           });
+          
+          console.log('Update successful');
         } catch (e) {
           setError('Update failed: ' + e.message);
           console.error('Update error:', e);
