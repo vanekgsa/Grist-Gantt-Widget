@@ -74,10 +74,10 @@
       return isNaN(d.getTime()) ? null : d;
     };
 
-    // CRITICAL: Convert column-oriented data to row-oriented array
+    // Конвертируем данные из формата колонок в строки
     const columnsToRows = (colData) => {
       if (!colData || typeof colData !== 'object') return [];
-      if (Array.isArray(colData)) return colData; // Already rows
+      if (Array.isArray(colData)) return colData;
       
       const columns = Object.keys(colData);
       if (columns.length === 0) return [];
@@ -98,7 +98,7 @@
     const ProjectWidget = () => {
       const [view, setView] = useState('kanban');
       const [records, setRecords] = useState([]);
-      const [statuses, setStatuses] = useState([]);
+      const [statuses, setStatuses] = useState([]); // Теперь храним полные объекты с id
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [draggedId, setDraggedId] = useState(null);
@@ -107,7 +107,7 @@
         grist.ready({
           columns: [
             { name: 'TaskName', title: 'Task Name' },
-            { name: 'Status', title: 'Status' },
+            { name: 'Status', title: 'Status' }, // Теперь это Reference колонка
             { name: 'StartDate', title: 'Start Date' },
             { name: 'EndDate', title: 'End Date' },
             { name: 'Assignee', title: 'Assignee', optional: true },
@@ -116,41 +116,33 @@
           requiredAccess: 'full'
         });
 
-        // Fetch both tasks AND statuses
         const loadData = async () => {
           try {
-            // 1. Fetch statuses from Status table
+            // Загружаем статусы с их ID
             let statusRows = [];
             try {
               const statusResult = await grist.docApi.fetchTable("Status");
               console.log('Raw status result:', statusResult);
               
-              // Convert columns format to rows format
               const statusData = columnsToRows(statusResult);
-              console.log('Converted to rows:', statusData);
+              console.log('Status data:', statusData);
               
-              // Sort by Order if available
-              statusRows = statusData.sort((a, b) => {
-                const orderA = a.Order || 0;
-                const orderB = b.Order || 0;
-                return orderA - orderB;
-              });
+              // Сортируем по Order
+              statusRows = statusData.sort((a, b) => (a.Order || 0) - (b.Order || 0));
+              console.log('Sorted statuses with IDs:', statusRows);
               
-              console.log('Sorted statuses:', statusRows);
             } catch (e) {
               console.warn('Could not load Status table:', e);
-              // Fallback to default statuses
               statusRows = [
-                { Status: 'To Do', Color: '#9e9e9e', Order: 1 },
-                { Status: 'In Progress', Color: '#2196F3', Order: 2 },
-                { Status: 'Review', Color: '#FF9800', Order: 3 },
-                { Status: 'Done', Color: '#4CAF50', Order: 4 }
+                { id: 1, Status: 'To Do', Color: '#9e9e9e', Order: 1 },
+                { id: 2, Status: 'In Progress', Color: '#2196F3', Order: 2 },
+                { id: 3, Status: 'Done', Color: '#4CAF50', Order: 3 }
               ];
             }
 
             setStatuses(statusRows);
 
-            // 2. Subscribe to task records
+            // Подписываемся на задачи
             grist.onRecords((data) => {
               try {
                 const mapped = grist.mapColumnNames(data);
@@ -161,18 +153,45 @@
                 }
 
                 const rows = Array.isArray(mapped) ? mapped : [mapped];
-                const processed = rows.map(r => ({
-                  id: r.id,
-                  TaskName: str(r.TaskName),
-                  Status: str(r.Status),
-                  StartDate: toDate(r.StartDate),
-                  EndDate: toDate(r.EndDate),
-                  StartDateStr: str(r.StartDate),
-                  EndDateStr: str(r.EndDate),
-                  Assignee: str(r.Assignee),
-                  Priority: str(r.Priority)
-                }));
+                
+                // Важно: Status теперь может быть объектом {id, ...} или числом (ID)
+                const processed = rows.map(r => {
+                  // Определяем ID статуса и текст статуса
+                  let statusId = null;
+                  let statusText = '';
+                  
+                  if (r.Status && typeof r.Status === 'object') {
+                    // Status пришел как объект с полями
+                    statusId = r.Status.id || r.Status.Id;
+                    statusText = r.Status.Status || r.Status.Name || str(r.Status);
+                  } else if (typeof r.Status === 'number') {
+                    // Status пришел как число (ID)
+                    statusId = r.Status;
+                    // Найдем текст статуса по ID
+                    const found = statusRows.find(s => s.id === statusId);
+                    statusText = found ? found.Status : String(statusId);
+                  } else {
+                    statusText = str(r.Status);
+                    // Попробуем найти ID по тексту
+                    const found = statusRows.find(s => s.Status === statusText);
+                    statusId = found ? found.id : null;
+                  }
 
+                  return {
+                    id: r.id,
+                    TaskName: str(r.TaskName),
+                    StatusId: statusId,      // ID для обновления
+                    StatusText: statusText,   // Текст для отображения
+                    StartDate: toDate(r.StartDate),
+                    EndDate: toDate(r.EndDate),
+                    StartDateStr: str(r.StartDate),
+                    EndDateStr: str(r.EndDate),
+                    Assignee: str(r.Assignee),
+                    Priority: str(r.Priority)
+                  };
+                });
+
+                console.log('Processed records:', processed);
                 setRecords(processed);
                 setLoading(false);
               } catch (err) {
@@ -190,36 +209,54 @@
         loadData();
       }, []);
 
-      const getStatusColor = (statusName) => {
-        const status = statuses.find(s => s.Status === statusName);
+      // Получаем цвет по тексту статуса
+      const getStatusColor = (statusText) => {
+        const status = statuses.find(s => s.Status === statusText);
         return status?.Color || '#757575';
       };
 
-      const updateStatus = async (id, newStatus) => {
+      // Получаем ID статуса по тексту
+      const getStatusId = (statusText) => {
+        const status = statuses.find(s => s.Status === statusText);
+        return status?.id || null;
+      };
+
+      // ОБНОВЛЕНИЕ: записываем ID статуса, а не текст!
+      const updateStatus = async (taskId, newStatusText) => {
         try {
+          const statusId = getStatusId(newStatusText);
+          console.log('Updating task', taskId, 'to status', newStatusText, 'ID:', statusId);
+          
+          if (!statusId) {
+            setError('Status ID not found for: ' + newStatusText);
+            return;
+          }
+
+          // Записываем ID (число), а не текст!
           await grist.selectedTable.update({
-            id: id,
-            fields: { Status: newStatus }
+            id: taskId,
+            fields: { Status: statusId }
           });
         } catch (e) {
           setError('Update failed: ' + e.message);
+          console.error('Update error:', e);
         }
       };
 
-      // Group by status, including ALL statuses from Status table
+      // Группируем по тексту статуса, но используем все статусы из таблицы
       const byStatus = () => {
         const grouped = {};
         
-        // Initialize all statuses with empty arrays
+        // Инициализируем все колонки статусов
         statuses.forEach(status => {
           if (status.IsActive !== false) {
             grouped[status.Status] = [];
           }
         });
         
-        // Fill in tasks
+        // Распределяем задачи
         records.forEach(r => {
-          const s = r.Status || 'Uncategorized';
+          const s = r.StatusText || 'Uncategorized';
           if (!grouped[s]) grouped[s] = [];
           grouped[s].push(r);
         });
@@ -259,7 +296,7 @@
         return {
           left: (offset / total * 100) + '%',
           width: Math.max(duration / total * 100, 2) + '%',
-          backgroundColor: getStatusColor(task.Status)
+          backgroundColor: getStatusColor(task.StatusText)
         };
       };
 
@@ -282,21 +319,21 @@
           <div className="main-content">
             {view === 'kanban' ? (
               <div className="kanban-board">
-                {Object.entries(grouped).map(([status, tasks]) => (
+                {Object.entries(grouped).map(([statusText, tasks]) => (
                   <div 
-                    key={status} 
+                    key={statusText} 
                     className="kanban-column" 
                     style={{minHeight: '200px'}}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                       e.preventDefault();
-                      if (draggedId) updateStatus(draggedId, status);
+                      if (draggedId) updateStatus(draggedId, statusText);
                     }}
                   >
-                    <div className="column-header" style={{borderBottomColor: getStatusColor(status)}}>
+                    <div className="column-header" style={{borderBottomColor: getStatusColor(statusText)}}>
                       <span>
-                        <span className="status-badge" style={{backgroundColor: getStatusColor(status)}}></span>
-                        {status}
+                        <span className="status-badge" style={{backgroundColor: getStatusColor(statusText)}}></span>
+                        {statusText}
                       </span>
                       <span className="column-count">{tasks.length}</span>
                     </div>
@@ -309,7 +346,7 @@
                             key={task.id} 
                             className="kanban-card" 
                             draggable
-                            style={{borderLeftColor: getStatusColor(task.Status)}}
+                            style={{borderLeftColor: getStatusColor(task.StatusText)}}
                             onDragStart={() => setDraggedId(task.id)}
                             onDragEnd={() => setDraggedId(null)}
                           >
