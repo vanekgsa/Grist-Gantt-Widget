@@ -7,7 +7,7 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
-  const [columnMappings, setColumnMappings] = useState(null); // Store actual column mappings
+  const [hasData, setHasData] = useState(false); // Track if we received any data
 
   useEffect(() => {
     grist.ready({
@@ -20,23 +20,6 @@ const ProjectWidget = () => {
         { name: 'Priority', title: 'Priority', optional: true }
       ],
       requiredAccess: 'full'
-    });
-
-    // Listen for options/mappings changes
-    grist.onOptions((options, mappings) => {
-      console.log('onOptions fired:', { options, mappings });
-      
-      // Check if we have actual column mappings (not just accessLevel)
-      // mappings.columns contains the actual column mappings
-      const cols = mappings?.columns || options?.columnsMapping;
-      
-      if (cols && Object.keys(cols).length > 0) {
-        console.log('Column mappings found:', cols);
-        setColumnMappings(cols);
-      } else {
-        console.log('No column mappings yet');
-        setColumnMappings(null);
-      }
     });
 
     const load = async () => {
@@ -60,18 +43,25 @@ const ProjectWidget = () => {
 
         // Subscribe to records
         grist.onRecords((data, mappings) => {
-          console.log('onRecords fired:', { data, mappings });
+          console.log('onRecords fired:', data, mappings);
           
-          // Check for column mappings in the mappings parameter
-          const cols = mappings?.columns;
-          if (cols && Object.keys(cols).length > 0) {
-            setColumnMappings(cols);
+          // Check if we have valid column mappings (mappings will have column names as keys)
+          const hasValidMappings = mappings && (
+            mappings.TaskName || mappings.Status || mappings.StartDate || mappings.EndDate
+          );
+          
+          if (!hasValidMappings) {
+            console.log('No valid column mappings in onRecords');
+            setHasData(false);
+            setLoading(false);
+            return;
           }
           
+          setHasData(true);
           const mapped = grist.mapColumnNames(data);
           
           if (!mapped) {
-            console.log('mapColumnNames returned null - mappings missing');
+            setError('Ошибка сопоставления колонок');
             setLoading(false);
             return;
           }
@@ -105,17 +95,13 @@ const ProjectWidget = () => {
           setLoading(false);
         }, { format: 'rows' });
 
-        // Set loading to false after a short delay if no data arrives
-        // This ensures we show the config UI if onRecords never fires
+        // Safety timeout: if no data after 3 seconds, assume no mappings
         setTimeout(() => {
-          setLoading(prev => {
-            if (prev) {
-              console.log('Timeout: no data received, assuming no mappings');
-              return false; // Stop loading, show config UI
-            }
-            return prev;
-          });
-        }, 1000);
+          if (!hasData && loading) {
+            console.log('Timeout: no data received, showing config UI');
+            setLoading(false);
+          }
+        }, 3000);
 
       } catch (e) {
         setError('Ошибка: ' + e.message);
@@ -124,7 +110,7 @@ const ProjectWidget = () => {
     };
     
     load();
-  }, []);
+  }, [hasData]); // Add hasData to dependencies
 
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
@@ -144,8 +130,8 @@ const ProjectWidget = () => {
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  // Show configuration needed UI when no column mappings
-  if (!columnMappings && !loading && records.length === 0) {
+  // Show configuration UI when no data received (no mappings configured)
+  if (!hasData && !loading && records.length === 0) {
     return React.createElement('div', {
       style: {
         padding: '40px',
