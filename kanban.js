@@ -1,94 +1,77 @@
-const KanbanView = ({ 
-  records, 
-  statuses, 
-  draggedId, 
-  setDraggedId, 
-  onUpdateStatus, 
-  getStatusColor 
-}) => {
+const KanbanView = ({ records, statuses, draggedId, setDraggedId, onUpdateStatus }) => {
+  const getColor = (name) => {
+    const s = statuses.find(x => x.Status === name);
+    return s?.Color || '#757575';
+  };
   
-  // Group by status
   const byStatus = () => {
     const grouped = {};
-    
-    // Initialize all status columns
-    statuses.forEach(status => {
-      if (status.IsActive !== false) {
-        grouped[status.Status] = [];
-      }
+    statuses.forEach(s => {
+      if (s.IsActive !== false) grouped[s.Status] = [];
     });
-    
-    // Distribute records
     records.forEach(r => {
-      const s = r.StatusText || 'Uncategorized';
+      const s = r.StatusText || 'Без статуса';
       if (!grouped[s]) grouped[s] = [];
       grouped[s].push(r);
     });
-    
     return grouped;
   };
 
-  const grouped = byStatus();
-
-  return (
-    <div className="kanban-board">
-      {Object.entries(grouped).map(([statusText, tasks]) => (
-        <div 
-          key={statusText} 
-          className="kanban-column"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            if (draggedId) onUpdateStatus(draggedId, statusText);
-          }}
-        >
-          <div 
-            className="column-header" 
-            style={{borderBottomColor: getStatusColor(statusText)}}
-          >
-            <span>
-              <span 
-                className="status-badge" 
-                style={{backgroundColor: getStatusColor(statusText)}}
-              ></span>
-              {statusText}
-            </span>
-            <span className="column-count">{tasks.length}</span>
-          </div>
-          
-          <div className="kanban-tasks">
-            {tasks.length === 0 ? (
-              <div className="empty-state">Перетащите задачи сюда</div>
-            ) : (
-              tasks.map(task => (
-                <div 
-                  key={task.id} 
-                  className="kanban-card"
-                  draggable
-                  style={{borderLeftColor: getStatusColor(task.StatusText)}}
-                  onDragStart={() => setDraggedId(task.id)}
-                  onDragEnd={() => setDraggedId(null)}
-                >
-                  <div className="card-title">{task.TaskName}</div>
-                  <div className="card-meta">
-                    <span>{task.Assignee || 'Не назначен'}</span>
-                    {task.Priority && (
-                      <span className={PRIORITY_CLASSES[task.Priority] || ''}>
-                        {task.Priority}
-                      </span>
-                    )}
-                  </div>
-                  {task.StartDate && (
-                    <div className="card-dates">
-                      {task.StartDateStr} — {task.EndDateStr}
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+  return React.createElement('div', { className: 'kanban-board' },
+    Object.entries(byStatus()).map(([status, tasks]) => 
+      React.createElement('div', {
+        key: status,
+        className: 'kanban-column',
+        style: { minHeight: '200px' },
+        onDragOver: (e) => e.preventDefault(),
+        onDrop: (e) => {
+          e.preventDefault();
+          if (draggedId) onUpdateStatus(draggedId, status);
+        }
+      }, [
+        React.createElement('div', {
+          key: 'header',
+          className: 'column-header',
+          style: { borderBottomColor: getColor(status) }
+        }, [
+          React.createElement('span', { key: 'title' }, [
+            React.createElement('span', {
+              key: 'dot',
+              className: 'status-badge',
+              style: { backgroundColor: getColor(status) }
+            }),
+            status
+          ]),
+          React.createElement('span', { key: 'count', className: 'column-count' }, tasks.length)
+        ]),
+        React.createElement('div', { key: 'tasks', className: 'kanban-tasks' },
+          tasks.length === 0 
+            ? React.createElement('div', { className: 'empty-state' }, 'Перетащите задачи сюда')
+            : tasks.map(task => 
+                React.createElement('div', {
+                  key: task.id,
+                  className: 'kanban-card',
+                  draggable: true,
+                  style: { borderLeftColor: getColor(task.StatusText) },
+                  onDragStart: () => setDraggedId(task.id),
+                  onDragEnd: () => setDraggedId(null)
+                }, [
+                  React.createElement('div', { key: 'title', className: 'card-title' }, task.TaskName),
+                  React.createElement('div', { key: 'meta', className: 'card-meta' }, [
+                    React.createElement('span', { key: 'assignee' }, task.Assignee || 'Не назначен'),
+                    task.Priority && React.createElement('span', {
+                      key: 'priority',
+                      className: PRIORITY_CLASSES[task.Priority]
+                    }, task.Priority)
+                  ]),
+                  task.StartDate && React.createElement('div', {
+                    key: 'dates',
+                    className: 'card-dates'
+                  }, `${task.StartDateStr} — ${task.EndDateStr}`)
+                ])
+              )
+        )
+      ])
+    )
   );
 };

@@ -21,18 +21,14 @@ const ProjectWidget = () => {
       requiredAccess: 'full'
     });
 
-    const loadData = async () => {
+    const load = async () => {
       try {
-        // Load statuses from Status table
-        let statusRows = [];
+        let s = [];
         try {
-          const statusResult = await grist.docApi.fetchTable("Status");
-          const statusData = columnsToRows(statusResult);
-          statusRows = statusData.sort((a, b) => (a.Order || 0) - (b.Order || 0));
+          const r = await grist.docApi.fetchTable("Status");
+          s = columnsToRows(r).sort((a, b) => (a.Order || 0) - (b.Order || 0));
         } catch (e) {
-          console.warn('Could not load Status table:', e);
-          // Fallback with Russian statuses
-          statusRows = [
+          s = [
             { id: 1, Status: 'В ожидании', Color: '#9E9E9E', Order: 1 },
             { id: 2, Status: 'К выполнению', Color: '#607D8B', Order: 2 },
             { id: 3, Status: 'В работе', Color: '#2196F3', Order: 3 },
@@ -41,136 +37,106 @@ const ProjectWidget = () => {
             { id: 6, Status: 'Отменено', Color: '#F44336', Order: 6 }
           ];
         }
+        setStatuses(s);
 
-        setStatuses(statusRows);
-
-        // Subscribe to task records
         grist.onRecords((data) => {
-          try {
-            const mapped = grist.mapColumnNames(data);
-            if (!mapped) {
-              setError('Please map columns in widget options');
-              setLoading(false);
-              return;
-            }
-
-            const rows = Array.isArray(mapped) ? mapped : [mapped];
-            
-            const processed = rows.map(r => {
-              let statusId = null;
-              let statusText = '';
-              
-              if (r.Status && typeof r.Status === 'object') {
-                statusId = r.Status.id || r.Status.Id;
-                statusText = r.Status.Status || r.Status.Name || str(r.Status);
-              } else if (typeof r.Status === 'number') {
-                statusId = r.Status;
-                const found = statusRows.find(s => s.id === statusId);
-                statusText = found ? found.Status : String(statusId);
-              } else {
-                statusText = str(r.Status);
-                const found = statusRows.find(s => s.Status === statusText);
-                statusId = found ? found.id : null;
-              }
-
-              return {
-                id: r.id,
-                TaskName: str(r.TaskName),
-                StatusId: statusId,
-                StatusText: statusText,
-                StartDate: toDate(r.StartDate),
-                EndDate: toDate(r.EndDate),
-                StartDateStr: str(r.StartDate),
-                EndDateStr: str(r.EndDate),
-                Assignee: str(r.Assignee),
-                Priority: str(r.Priority)
-              };
-            });
-
-            setRecords(processed);
+          const mapped = grist.mapColumnNames(data);
+          if (!mapped) {
+            setError('Настройте колонки в опциях виджета');
             setLoading(false);
-          } catch (err) {
-            setError('Error: ' + err.message);
-            setLoading(false);
+            return;
           }
+          
+          const rows = Array.isArray(mapped) ? mapped : [mapped];
+          setRecords(rows.map(r => {
+            let sid = null, st = '';
+            if (r.Status && typeof r.Status === 'object') {
+              sid = r.Status.id || r.Status.Id;
+              st = r.Status.Status || r.Status.Name || str(r.Status);
+            } else if (typeof r.Status === 'number') {
+              sid = r.Status;
+              st = s.find(x => x.id === sid)?.Status || String(sid);
+            } else {
+              st = str(r.Status);
+              sid = s.find(x => x.Status === st)?.id || null;
+            }
+            return {
+              id: r.id,
+              TaskName: str(r.TaskName),
+              StatusId: sid,
+              StatusText: st,
+              StartDate: toDate(r.StartDate),
+              EndDate: toDate(r.EndDate),
+              StartDateStr: str(r.StartDate),
+              EndDateStr: str(r.EndDate),
+              Assignee: str(r.Assignee),
+              Priority: str(r.Priority)
+            };
+          }));
+          setLoading(false);
         }, { format: 'rows' });
-
-      } catch (err) {
-        setError('Failed to initialize: ' + err.message);
+      } catch (e) {
+        setError('Ошибка: ' + e.message);
         setLoading(false);
       }
     };
-
-    loadData();
+    load();
   }, []);
 
-  // Update task status
-  const handleUpdateStatus = async (taskId, newStatusText) => {
+  const updateStatus = async (taskId, newStatusText) => {
+    const status = statuses.find(s => s.Status === newStatusText);
+    if (!status) {
+      setError('Статус не найден: ' + newStatusText);
+      return;
+    }
     try {
-      const statusId = getStatusId(statuses, newStatusText);
-      
-      if (!statusId) {
-        setError('Status ID not found: ' + newStatusText);
-        return;
-      }
-
       await grist.selectedTable.update({
         id: taskId,
-        fields: { Status: statusId }
+        fields: { Status: status.id }
       });
     } catch (e) {
-      setError('Update failed: ' + e.message);
+      setError('Ошибка обновления: ' + e.message);
     }
   };
 
-  // Wrapper for getStatusColor with current statuses
-  const handleGetStatusColor = (statusText) => {
-    return getStatusColor(statuses, statusText);
-  };
+  const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  if (loading) return <div className="loading">Загрузка...</div>;
-  if (error) return <div className="error">{error}</div>;
+  if (loading) return React.createElement('div', { className: 'loading' }, 'Загрузка...');
+  if (error) return React.createElement('div', { className: 'error' }, error);
 
-  return (
-    <div className="widget-container">
-      <div className="toolbar">
-        <h2><i className="fas fa-project-diagram"></i> Управление проектом</h2>
-        <div className="view-toggle">
-          <button 
-            className={view === 'kanban' ? 'view-btn active' : 'view-btn'} 
-            onClick={() => setView('kanban')}
-          >
-            <i className="fas fa-columns"></i> Канбан
-          </button>
-          <button 
-            className={view === 'gantt' ? 'view-btn active' : 'view-btn'} 
-            onClick={() => setView('gantt')}
-          >
-            <i className="fas fa-stream"></i> Гантт
-          </button>
-        </div>
-      </div>
-
-      <div className="main-content">
-        {view === 'kanban' ? (
-          <KanbanView 
-            records={records}
-            statuses={statuses}
-            draggedId={draggedId}
-            setDraggedId={setDraggedId}
-            onUpdateStatus={handleUpdateStatus}
-            getStatusColor={handleGetStatusColor}
-          />
-        ) : (
-          <GanttView 
-            records={records}
-            getStatusColor={handleGetStatusColor}
-          />
-        )}
-      </div>
-    </div>
-  );
+  return React.createElement('div', { className: 'widget-container' }, [
+    React.createElement('div', { key: 'toolbar', className: 'toolbar' }, [
+      React.createElement('h2', { key: 'title' }, 'Управление проектом'),
+      React.createElement('div', { key: 'toggle', className: 'view-toggle' }, [
+        React.createElement('button', {
+          key: 'kanban',
+          className: view === 'kanban' ? 'view-btn active' : 'view-btn',
+          onClick: () => setView('kanban')
+        }, 'Канбан'),
+        React.createElement('button', {
+          key: 'gantt',
+          className: view === 'gantt' ? 'view-btn active' : 'view-btn',
+          onClick: () => setView('gantt')
+        }, 'Гантт')
+      ])
+    ]),
+    React.createElement('div', { key: 'content', className: 'main-content' },
+      view === 'kanban'
+        ? React.createElement(KanbanView, {
+            records,
+            statuses,
+            draggedId,
+            setDraggedId,
+            onUpdateStatus: updateStatus
+          })
+        : React.createElement(GanttView, {
+            records,
+            getStatusColor: getColor
+          })
+    )
+  ]);
 };
 
-// Render
-ReactDOM.createRoot(document.getElementById('root')).render(<ProjectWidget />);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(ProjectWidget)
+);
