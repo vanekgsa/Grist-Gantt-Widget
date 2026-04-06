@@ -1,4 +1,4 @@
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const ProjectWidget = () => {
   const [view, setView] = useState('kanban');
@@ -7,7 +7,9 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
-  const [hasData, setHasData] = useState(false); // Track if we received any data
+  
+  // Use ref to track data arrival - persists across renders
+  const dataReceived = useRef(false);
 
   useEffect(() => {
     grist.ready({
@@ -24,7 +26,7 @@ const ProjectWidget = () => {
 
     const load = async () => {
       try {
-        // Load statuses first
+        // Load statuses
         let s = [];
         try {
           const r = await grist.docApi.fetchTable("Status");
@@ -43,23 +45,10 @@ const ProjectWidget = () => {
 
         // Subscribe to records
         grist.onRecords((data, mappings) => {
-          console.log('onRecords fired:', data, mappings);
+          console.log('onRecords fired - data received');
+          dataReceived.current = true; // Set ref, not state
           
-          // Check if we have valid column mappings (mappings will have column names as keys)
-          const hasValidMappings = mappings && (
-            mappings.TaskName || mappings.Status || mappings.StartDate || mappings.EndDate
-          );
-          
-          if (!hasValidMappings) {
-            console.log('No valid column mappings in onRecords');
-            setHasData(false);
-            setLoading(false);
-            return;
-          }
-          
-          setHasData(true);
           const mapped = grist.mapColumnNames(data);
-          
           if (!mapped) {
             setError('Ошибка сопоставления колонок');
             setLoading(false);
@@ -95,14 +84,6 @@ const ProjectWidget = () => {
           setLoading(false);
         }, { format: 'rows' });
 
-        // Safety timeout: if no data after 3 seconds, assume no mappings
-        setTimeout(() => {
-          if (!hasData && loading) {
-            console.log('Timeout: no data received, showing config UI');
-            setLoading(false);
-          }
-        }, 3000);
-
       } catch (e) {
         setError('Ошибка: ' + e.message);
         setLoading(false);
@@ -110,7 +91,18 @@ const ProjectWidget = () => {
     };
     
     load();
-  }, [hasData]); // Add hasData to dependencies
+
+    // CRITICAL: Check ref after 2 seconds, not state
+    const timer = setTimeout(() => {
+      console.log('Timeout check - dataReceived.current:', dataReceived.current);
+      if (!dataReceived.current) {
+        console.log('No data received, showing config UI');
+        setLoading(false); // This triggers re-render to show config UI
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, []); // Empty deps - run once only
 
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
@@ -130,8 +122,8 @@ const ProjectWidget = () => {
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  // Show configuration UI when no data received (no mappings configured)
-  if (!hasData && !loading && records.length === 0) {
+  // CRITICAL: Check the ref, not state
+  if (!dataReceived.current && !loading) {
     return React.createElement('div', {
       style: {
         padding: '40px',
