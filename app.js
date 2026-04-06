@@ -7,6 +7,7 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
+  const [configNeeded, setConfigNeeded] = useState(false); // NEW: track if mappings needed
 
   useEffect(() => {
     grist.ready({
@@ -20,6 +21,14 @@ const ProjectWidget = () => {
       ],
       requiredAccess: 'full'
     });
+
+    // NEW: Timeout to detect if column mappings are missing
+    const timeoutId = setTimeout(() => {
+      if (loading) {
+        setConfigNeeded(true);
+        setLoading(false);
+      }
+    }, 2000); // 2 seconds timeout
 
     const load = async () => {
       try {
@@ -40,6 +49,9 @@ const ProjectWidget = () => {
         setStatuses(s);
 
         grist.onRecords((data) => {
+          clearTimeout(timeoutId); // NEW: clear timeout when data arrives
+          setConfigNeeded(false);  // NEW: reset config flag
+          
           const mapped = grist.mapColumnNames(data);
           if (!mapped) {
             setError('Настройте колонки в опциях виджета');
@@ -81,6 +93,9 @@ const ProjectWidget = () => {
       }
     };
     load();
+
+    // NEW: cleanup timeout on unmount
+    return () => clearTimeout(timeoutId);
   }, []);
 
   const updateStatus = async (taskId, newStatusText) => {
@@ -100,6 +115,34 @@ const ProjectWidget = () => {
   };
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
+
+  // NEW: Show config message instead of infinite loading
+  if (configNeeded) {
+    return React.createElement('div', {
+      style: {
+        padding: '40px',
+        textAlign: 'center',
+        fontFamily: 'sans-serif'
+      }
+    }, [
+      React.createElement('div', {
+        key: 'icon',
+        style: { fontSize: '48px', marginBottom: '20px' }
+      }, '⚙️'),
+      React.createElement('h3', { key: 'title' }, 'Требуется настройка'),
+      React.createElement('p', { key: 'desc', style: { color: '#666', marginBottom: '20px' } },
+        'Для работы виджета нужно настроить соответствие колонок'
+      ),
+      React.createElement('ol', {
+        key: 'steps',
+        style: { textAlign: 'left', display: 'inline-block', color: '#333' }
+      }, [
+        React.createElement('li', { key: 1 }, 'Нажмите на меню виджета (три точки ⋮)'),
+        React.createElement('li', { key: 2 }, 'Выберите "Настроить виджет" или "Widget options"'),
+        React.createElement('li', { key: 3 }, 'Укажите соответствие колонок: Task Name, Status, Start Date, End Date')
+      ])
+    ]);
+  }
 
   if (loading) return React.createElement('div', { className: 'loading' }, 'Загрузка...');
   if (error) return React.createElement('div', { className: 'error' }, error);
