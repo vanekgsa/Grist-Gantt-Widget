@@ -8,23 +8,12 @@ const ProjectWidget = () => {
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
   const [hasMapping, setHasMapping] = useState(false);
-  const dataReceived = useRef(false);
+  
+  // Флаг, чтобы не подписываться на onRecords несколько раз
+  const subscriptionActive = useRef(false);
 
+  // Загрузка статусов (один раз при монтировании)
   useEffect(() => {
-    // Сообщаем Grist, какие колонки нам нужны
-    grist.ready({
-      columns: [
-        { name: 'TaskName', title: 'Task Name' },
-        { name: 'Status', title: 'Status' },
-        { name: 'StartDate', title: 'Start Date' },
-        { name: 'EndDate', title: 'End Date' },
-        { name: 'Assignee', title: 'Assignee', optional: true },
-        { name: 'Priority', title: 'Priority', optional: true }
-      ],
-      requiredAccess: 'full'
-    });
-
-    // Функция загрузки статусов (вызывается один раз)
     const loadStatuses = async () => {
       try {
         const r = await grist.docApi.fetchTable("Status");
@@ -43,66 +32,154 @@ const ProjectWidget = () => {
       }
     };
     loadStatuses();
+  }, []);
 
-    // Слушаем изменения опций виджета (включая маппинг колонок)
-    grist.on('options', (options) => {
-      const mapping = options?.columnsMapping;
-      const hasAnyMapping = mapping && Object.keys(mapping).length > 0;
-      setHasMapping(hasAnyMapping);
+  // Функция для подписки на данные (вызывается, когда маппинг есть)
+  const subscribeToRecords = () => {
+    if (subscriptionActive.current) return;
+    subscriptionActive.current = true;
+    
+    grist.onRecords((data) => {
+      console.log('onRecords received:', data);
+      const mapped = grist.mapColumnNames(data);
+      if (!mapped) {
+        setError('Не удалось сопоставить колонки. Проверьте настройки виджета.');
+        setLoading(false);
+        return;
+      }
       
-      if (hasAnyMapping) {
-        // Если маппинг появился – подписываемся на данные
-        if (!dataReceived.current) {
-          grist.onRecords((data) => {
-            console.log('onRecords fired:', data);
-            dataReceived.current = true;
-            setLoading(false);
-            
-            const mapped = grist.mapColumnNames(data);
-            if (!mapped) {
-              setError('Настройте колонки в опциях виджета');
-              return;
-            }
-            
-            const rows = Array.isArray(mapped) ? mapped : [mapped];
-            setRecords(rows.map(r => {
-              let sid = null, st = '';
-              if (r.Status && typeof r.Status === 'object') {
-                sid = r.Status.id || r.Status.Id;
-                st = r.Status.Status || r.Status.Name || str(r.Status);
-              } else if (typeof r.Status === 'number') {
-                sid = r.Status;
-                st = statuses.find(x => x.id === sid)?.Status || String(sid);
-              } else {
-                st = str(r.Status);
-                sid = statuses.find(x => x.Status === st)?.id || null;
-              }
-              return {
-                id: r.id,
-                TaskName: str(r.TaskName),
-                StatusId: sid,
-                StatusText: st,
-                StartDate: toDate(r.StartDate),
-                EndDate: toDate(r.EndDate),
-                StartDateStr: str(r.StartDate),
-                EndDateStr: str(r.EndDate),
-                Assignee: str(r.Assignee),
-                Priority: str(r.Priority)
-              };
-            }));
-          }, { format: 'rows' });
+      const rows = Array.isArray(mapped) ? mapped : [mapped];
+      const newRecords = rows.map(r => {
+        let sid = null, st = '';
+        if (r.Status && typeof r.Status === 'object') {
+          sid = r.Status.id || r.Status.Id;
+          st = r.Status.Status || r.Status.Name || str(r.Status);
+        } else if (typeof r.Status === 'number') {
+          sid = r.Status;
+          st = statuses.find(x => x.id === sid)?.Status || String(sid);
+        } else {
+          st = str(r.Status);
+          sid = statuses.find(x => x.Status === st)?.id || null;
         }
-      } else {
-        // Нет маппинга – сбрасываем данные и показываем UI настройки
+        return {
+          id: r.id,
+          TaskName: str(r.TaskName),
+          StatusId: sid,
+          StatusText: st,
+          StartDate: toDate(r.StartDate),
+          EndDate: toDate(r.EndDate),
+          StartDateStr: str(r.StartDate),
+          EndDateStr: str(r.EndDate),
+          Assignee: str(r.Assignee),
+          Priority: str(r.Priority)
+        };
+      });
+      setRecords(newRecords);
+      setLoading(false);
+      setError(null);
+    }, { format: 'rows' });
+  };
+
+  // Проверка конфигурации и инициализация
+  useEffect(() => {
+    grist.ready({
+      columns: [
+        { name: 'TaskName', title: 'Task Name' },
+        { name: 'Status', title: 'Status' },
+        { name: 'StartDate', title: 'Start Date' },
+        { name: 'EndDate', title: 'End Date' },
+        { name: 'Assignee', title: 'Assignee', optional: true },
+        { name: 'Priority', title: 'Priority', optional: true }
+      ],
+      requiredAccess: 'full'
+    });
+
+    let isMounted = true;
+
+    const checkMappingAndSubscribe = async () => {
+      try {
+        // Получаем текущие настройки виджета
+        const config = await grist.getConfig();
+        console.log('Current config:', config);
+        const mapping = config?.columnsMapping;
+        const mappingExists = mapping && Object.keys(mapping).length > 0;
+        
+        if (!isMounted) return;
+        
+        setHasMapping(mappingExists);
+        
+        if (mappingExists) {
+          // Если маппинг есть – подписываемся на данные
+          subscribeToRecords();
+        } else {
+          // Нет маппинга – выходим из режима загрузки, показываем экран настройки
+          setLoading(false);
+          setRecords([]);
+        }
+      } catch (err) {
+        console.error('Error getting config:', err);
+        if (isMounted) {
+          setError('Ошибка загрузки конфигурации: ' + err.message);
+          setLoading(false);
+        }
+      }
+    };
+
+    checkMappingAndSubscribe();
+
+    // Слушаем изменения опций (например, когда пользователь настраивает колонки)
+    const optionsHandler = (options) => {
+      console.log('Options changed:', options);
+      const mapping = options?.columnsMapping;
+      const newMappingExists = mapping && Object.keys(mapping).length > 0;
+      
+      setHasMapping(newMappingExists);
+      
+      if (newMappingExists && !subscriptionActive.current) {
+        // Появился маппинг – подписываемся и сбрасываем ошибки
+        setError(null);
+        subscribeToRecords();
+      } else if (!newMappingExists) {
+        // Маппинг удалили – очищаем данные и показываем настройку
+        subscriptionActive.current = false;
         setRecords([]);
         setLoading(false);
-        dataReceived.current = false;
       }
-    });
-  }, []); // Пустой массив зависимостей – эффект выполнится один раз
+    };
+    
+    grist.on('options', optionsHandler);
+    
+    return () => {
+      isMounted = false;
+      // Нельзя отписаться от grist.onRecords, но флаг subscriptionActive предотвратит повторную подписку
+    };
+  }, []); // Пустой массив – эффект выполняется один раз
 
-  // Экран настройки, если нет маппинга
-  if (!hasMapping && !loading && records.length === 0) {
+  // Обновление статуса задачи
+  const updateStatus = async (taskId, newStatusText) => {
+    const status = statuses.find(s => s.Status === newStatusText);
+    if (!status) {
+      setError('Статус не найден: ' + newStatusText);
+      return;
+    }
+    try {
+      await grist.selectedTable.update({
+        id: taskId,
+        fields: { Status: status.id }
+      });
+    } catch (e) {
+      setError('Ошибка обновления: ' + e.message);
+    }
+  };
+
+  // Вспомогательная функция для получения цвета статуса (для GanttView)
+  const getStatusColor = (statusText) => {
+    const s = statuses.find(x => x.Status === statusText);
+    return s?.Color || '#757575';
+  };
+
+  // UI настройки (показывается, если нет маппинга и нет ошибок, и не в процессе загрузки)
+  if (!hasMapping && !loading && records.length === 0 && !error) {
     return React.createElement('div', {
       style: {
         padding: '40px',
@@ -146,8 +223,13 @@ const ProjectWidget = () => {
     ]);
   }
 
-  if (loading) return React.createElement('div', { className: 'loading' }, 'Загрузка...');
-  if (error) return React.createElement('div', { className: 'error' }, error);
+  if (loading) {
+    return React.createElement('div', { className: 'loading' }, 'Загрузка...');
+  }
+  
+  if (error) {
+    return React.createElement('div', { className: 'error' }, error);
+  }
 
   return React.createElement('div', { className: 'widget-container' }, [
     React.createElement('div', { key: 'toolbar', className: 'toolbar' }, [
@@ -176,29 +258,13 @@ const ProjectWidget = () => {
           })
         : React.createElement(GanttView, {
             records,
-            getStatusColor: (statusText) => statuses.find(s => s.Status === statusText)?.Color || '#757575'
+            getStatusColor: getStatusColor
           })
     )
   ]);
 };
 
-// Остальные функции (updateStatus, getColor) остаются без изменений, но getColor можно удалить, так как он перенесён в пропс GanttView
-const updateStatus = async (taskId, newStatusText) => {
-  const status = statuses.find(s => s.Status === newStatusText);
-  if (!status) {
-    setError('Статус не найден: ' + newStatusText);
-    return;
-  }
-  try {
-    await grist.selectedTable.update({
-      id: taskId,
-      fields: { Status: status.id }
-    });
-  } catch (e) {
-    setError('Ошибка обновления: ' + e.message);
-  }
-};
-
+// Рендерим приложение
 ReactDOM.createRoot(document.getElementById('root')).render(
   React.createElement(ProjectWidget)
 );
