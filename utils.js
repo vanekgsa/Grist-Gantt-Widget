@@ -1,3 +1,4 @@
+
 const PRIORITY_CLASSES = {
   'High': 'priority-high',
   'Medium': 'priority-medium',
