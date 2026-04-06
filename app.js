@@ -8,9 +8,47 @@ const ProjectWidget = () => {
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
-  
+  const [projects, setProjects] = useState([]);
   const timeoutRef = useRef(null);
   const dataReceived = useRef(false);
+
+
+
+  // При получении records обновляем список проектов:
+  useEffect(() => {
+    const uniqueProjects = [...new Set(records.map(r => r.Project).filter(Boolean))];
+    setProjects(uniqueProjects);
+  }, [records]);
+  // Функция добавления задачи
+  const handleAddTask = async (newTask) => {
+    try {
+      await grist.selectedTable.add([newTask]);
+    } catch (e) {
+      setError('Ошибка создания: ' + e.message);
+    }
+  };
+
+    // Функция редактирования задачи
+  const handleEditTask = async (taskId, updatedFields) => {
+    try {
+      // Преобразуем даты обратно в ISO строки, если нужно
+      const fields = {
+        TaskName: updatedFields.TaskName,
+        Status: updatedFields.StatusId,
+        Assignee: updatedFields.Assignee || null,
+        Priority: updatedFields.Priority || null,
+        Project: updatedFields.Project || null,
+        StartDate: updatedFields.StartDate || null,
+        EndDate: updatedFields.EndDate || null
+        };
+        await grist.selectedTable.update({ id: taskId, fields });
+    } catch (e) {
+      setError('Ошибка редактирования: ' + e.message);
+    }
+  };
+
+
+
 
   // Загрузка статусов (один раз)
   useEffect(() => {
@@ -26,7 +64,7 @@ const ProjectWidget = () => {
           { id: 3, Status: 'В работе', Color: '#2196F3', Order: 3 },
           { id: 4, Status: 'На согласовании', Color: '#FF9800', Order: 4 },
           { id: 5, Status: 'Выполнено', Color: '#4CAF50', Order: 5 },
-          { id: 6, Status: 'Отменено', Color: '#F44336', Order: 6 }
+          { id: 6, Status: 'Отменено', Color: '#F44336', Order: 6 },
         ]);
       }
     };
@@ -42,7 +80,8 @@ const ProjectWidget = () => {
         { name: 'StartDate', title: 'Start Date' },
         { name: 'EndDate', title: 'End Date' },
         { name: 'Assignee', title: 'Assignee', optional: true },
-        { name: 'Priority', title: 'Priority', optional: true }
+        { name: 'Priority', title: 'Priority', optional: true },
+        { name: 'Project', title: 'Project', optional: true } 
       ],
       requiredAccess: 'full'
     });
@@ -204,9 +243,12 @@ const ProjectWidget = () => {
         ? React.createElement(KanbanView, {
             records,
             statuses,
+            projects,
             draggedId,
             setDraggedId,
-            onUpdateStatus: updateStatus
+            onUpdateStatus: updateStatus,
+            onAddTask: handleAddTask,
+            onEditTask: handleEditTask
           })
         : React.createElement(GanttView, {
             records,
