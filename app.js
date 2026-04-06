@@ -7,8 +7,6 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
-  
-  // Use ref to track data arrival - persists across renders
   const dataReceived = useRef(false);
 
   useEffect(() => {
@@ -26,7 +24,7 @@ const ProjectWidget = () => {
 
     const load = async () => {
       try {
-        // Load statuses
+        // Load statuses first
         let s = [];
         try {
           const r = await grist.docApi.fetchTable("Status");
@@ -43,66 +41,89 @@ const ProjectWidget = () => {
         }
         setStatuses(s);
 
-        // Subscribe to records
-        grist.onRecords((data, mappings) => {
-          console.log('onRecords fired - data received');
-          dataReceived.current = true; // Set ref, not state
+        // CRITICAL: Fetch data immediately instead of waiting for onRecords
+        try {
+          const data = await grist.selectedTable.fetchSelectedTable();
+          console.log('Initial fetch:', data);
           
-          const mapped = grist.mapColumnNames(data);
-          if (!mapped) {
-            setError('Ошибка сопоставления колонок');
-            setLoading(false);
-            return;
+          if (data && data.records && data.records.length > 0) {
+            dataReceived.current = true;
+            processData(data.records, s);
+          } else {
+            // No data yet, subscribe for updates
+            subscribeToRecords(s);
           }
-          
-          const rows = Array.isArray(mapped) ? mapped : [mapped];
-          setRecords(rows.map(r => {
-            let sid = null, st = '';
-            if (r.Status && typeof r.Status === 'object') {
-              sid = r.Status.id || r.Status.Id;
-              st = r.Status.Status || r.Status.Name || str(r.Status);
-            } else if (typeof r.Status === 'number') {
-              sid = r.Status;
-              st = s.find(x => x.id === sid)?.Status || String(sid);
-            } else {
-              st = str(r.Status);
-              sid = s.find(x => x.Status === st)?.id || null;
-            }
-            return {
-              id: r.id,
-              TaskName: str(r.TaskName),
-              StatusId: sid,
-              StatusText: st,
-              StartDate: toDate(r.StartDate),
-              EndDate: toDate(r.EndDate),
-              StartDateStr: str(r.StartDate),
-              EndDateStr: str(r.EndDate),
-              Assignee: str(r.Assignee),
-              Priority: str(r.Priority)
-            };
-          }));
-          setLoading(false);
-        }, { format: 'rows' });
+        } catch (fetchErr) {
+          console.log('Fetch failed, subscribing:', fetchErr);
+          // If fetch fails (no mappings yet), subscribe to onRecords
+          subscribeToRecords(s);
+        }
 
       } catch (e) {
         setError('Ошибка: ' + e.message);
         setLoading(false);
       }
     };
-    
-    load();
 
-    // CRITICAL: Check ref after 2 seconds, not state
-    const timer = setTimeout(() => {
-      console.log('Timeout check - dataReceived.current:', dataReceived.current);
-      if (!dataReceived.current) {
-        console.log('No data received, showing config UI');
-        setLoading(false); // This triggers re-render to show config UI
+    // Helper to process data
+    const processData = (rows, s) => {
+      const mapped = grist.mapColumnNames(rows);
+      
+      if (!mapped) {
+        setError('Настройте колонки в опциях виджета');
+        setLoading(false);
+        return;
       }
-    }, 2000);
 
-    return () => clearTimeout(timer);
-  }, []); // Empty deps - run once only
+      const processed = Array.isArray(mapped) ? mapped : [mapped];
+      setRecords(processed.map(r => {
+        let sid = null, st = '';
+        if (r.Status && typeof r.Status === 'object') {
+          sid = r.Status.id || r.Status.Id;
+          st = r.Status.Status || r.Status.Name || str(r.Status);
+        } else if (typeof r.Status === 'number') {
+          sid = r.Status;
+          st = s.find(x => x.id === sid)?.Status || String(sid);
+        } else {
+          st = str(r.Status);
+          sid = s.find(x => x.Status === st)?.id || null;
+        }
+        return {
+          id: r.id,
+          TaskName: str(r.TaskName),
+          StatusId: sid,
+          StatusText: st,
+          StartDate: toDate(r.StartDate),
+          EndDate: toDate(r.EndDate),
+          StartDateStr: str(r.StartDate),
+          EndDateStr: str(r.EndDate),
+          Assignee: str(r.Assignee),
+          Priority: str(r.Priority)
+        };
+      }));
+      setLoading(false);
+    };
+
+    // Subscribe to updates
+    const subscribeToRecords = (s) => {
+      grist.onRecords((data) => {
+        console.log('onRecords fired:', data);
+        dataReceived.current = true;
+        const rows = Array.isArray(data) ? data : [data];
+        processData(rows, s);
+      }, { format: 'rows' });
+
+      // Timeout for initial load
+      setTimeout(() => {
+        if (!dataReceived.current) {
+          console.log('No data after timeout');
+          setLoading(false);
+        }
+      }, 2000);
+    };
+
+    load();
+  }, []);
 
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
@@ -122,8 +143,8 @@ const ProjectWidget = () => {
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  // CRITICAL: Check the ref, not state
-  if (!dataReceived.current && !loading) {
+  // Show config UI only if no data and not loading
+  if (!dataReceived.current && !loading && records.length === 0) {
     return React.createElement('div', {
       style: {
         padding: '40px',
