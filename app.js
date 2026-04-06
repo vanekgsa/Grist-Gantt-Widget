@@ -9,10 +9,10 @@ const ProjectWidget = () => {
   const [draggedId, setDraggedId] = useState(null);
   const [hasMapping, setHasMapping] = useState(false);
   
-  // Флаг, чтобы не подписываться на onRecords несколько раз
   const subscriptionActive = useRef(false);
+  const optionsReceived = useRef(false);
 
-  // Загрузка статусов (один раз при монтировании)
+  // Загрузка статусов (один раз)
   useEffect(() => {
     const loadStatuses = async () => {
       try {
@@ -34,7 +34,7 @@ const ProjectWidget = () => {
     loadStatuses();
   }, []);
 
-  // Функция для подписки на данные (вызывается, когда маппинг есть)
+  // Подписка на получение данных из Grist
   const subscribeToRecords = () => {
     if (subscriptionActive.current) return;
     subscriptionActive.current = true;
@@ -80,7 +80,7 @@ const ProjectWidget = () => {
     }, { format: 'rows' });
   };
 
-  // Проверка конфигурации и инициализация
+  // Инициализация виджета и подписка на события опций
   useEffect(() => {
     grist.ready({
       columns: [
@@ -94,53 +94,20 @@ const ProjectWidget = () => {
       requiredAccess: 'full'
     });
 
-    let isMounted = true;
-
-    const checkMappingAndSubscribe = async () => {
-      try {
-        // Получаем текущие настройки виджета
-        const config = await grist.getConfig();
-        console.log('Current config:', config);
-        const mapping = config?.columnsMapping;
-        const mappingExists = mapping && Object.keys(mapping).length > 0;
-        
-        if (!isMounted) return;
-        
-        setHasMapping(mappingExists);
-        
-        if (mappingExists) {
-          // Если маппинг есть – подписываемся на данные
-          subscribeToRecords();
-        } else {
-          // Нет маппинга – выходим из режима загрузки, показываем экран настройки
-          setLoading(false);
-          setRecords([]);
-        }
-      } catch (err) {
-        console.error('Error getting config:', err);
-        if (isMounted) {
-          setError('Ошибка загрузки конфигурации: ' + err.message);
-          setLoading(false);
-        }
-      }
-    };
-
-    checkMappingAndSubscribe();
-
-    // Слушаем изменения опций (например, когда пользователь настраивает колонки)
+    // Обработчик изменения опций (в том числе маппинга колонок)
     const optionsHandler = (options) => {
-      console.log('Options changed:', options);
+      console.log('Options event:', options);
+      optionsReceived.current = true;
       const mapping = options?.columnsMapping;
       const newMappingExists = mapping && Object.keys(mapping).length > 0;
       
       setHasMapping(newMappingExists);
       
       if (newMappingExists && !subscriptionActive.current) {
-        // Появился маппинг – подписываемся и сбрасываем ошибки
         setError(null);
         subscribeToRecords();
       } else if (!newMappingExists) {
-        // Маппинг удалили – очищаем данные и показываем настройку
+        // Маппинг отсутствует или удалён – очищаем данные и показываем настройку
         subscriptionActive.current = false;
         setRecords([]);
         setLoading(false);
@@ -149,13 +116,19 @@ const ProjectWidget = () => {
     
     grist.on('options', optionsHandler);
     
-    return () => {
-      isMounted = false;
-      // Нельзя отписаться от grist.onRecords, но флаг subscriptionActive предотвратит повторную подписку
-    };
-  }, []); // Пустой массив – эффект выполняется один раз
+    // Таймаут на случай, если событие options не придёт (старая версия API или ошибка)
+    const timeout = setTimeout(() => {
+      if (!optionsReceived.current) {
+        console.log('Options event not received, assuming no mapping');
+        setHasMapping(false);
+        setLoading(false);
+      }
+    }, 2000);
+    
+    return () => clearTimeout(timeout);
+  }, []);
 
-  // Обновление статуса задачи
+  // Обновление статуса задачи (drag&drop в канбане)
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
     if (!status) {
@@ -172,13 +145,13 @@ const ProjectWidget = () => {
     }
   };
 
-  // Вспомогательная функция для получения цвета статуса (для GanttView)
+  // Цвет статуса для диаграммы Гантта
   const getStatusColor = (statusText) => {
     const s = statuses.find(x => x.Status === statusText);
     return s?.Color || '#757575';
   };
 
-  // UI настройки (показывается, если нет маппинга и нет ошибок, и не в процессе загрузки)
+  // Экран настройки (показывается, если нет маппинга, нет загрузки, нет ошибок и нет данных)
   if (!hasMapping && !loading && records.length === 0 && !error) {
     return React.createElement('div', {
       style: {
@@ -264,7 +237,6 @@ const ProjectWidget = () => {
   ]);
 };
 
-// Рендерим приложение
 ReactDOM.createRoot(document.getElementById('root')).render(
   React.createElement(ProjectWidget)
 );
