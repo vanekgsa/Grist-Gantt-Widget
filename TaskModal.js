@@ -10,31 +10,32 @@ const TaskModal = ({ isOpen, task, onSave, onClose, statuses, projects, users })
     ProjectId: ''
   });
 
-  React.useEffect(() => {
-    if (task) {
-      setFormData({
-        TaskName: task.TaskName || '',
-        StatusId: task.StatusId || '',
-        AssigneeId: task.AssigneeId || '',
-        Priority: task.Priority || '',
-        PriorityValue: task.Priority === 'High' ? 1 : (task.Priority === 'Medium' ? 2 : (task.Priority === 'Low' ? 3 : null)),
-        StartDate: task.StartDate ? task.StartDate.toISOString().split('T')[0] : '',
-        EndDate: task.EndDate ? task.EndDate.toISOString().split('T')[0] : '',
-        ProjectId: task.ProjectId || ''
-      });
-    } else {
-      setFormData({
-        TaskName: '',
-        StatusId: statuses[0]?.id || '',
-        AssigneeId: '',
-        Priority: '',
-        PriorityValue: null,
-        StartDate: '',
-        EndDate: '',
-        ProjectId: ''
-      });
-    }
-  }, [task, statuses]);
+React.useEffect(() => {
+  if (task) {
+    setFormData({
+      TaskName: task.TaskName || '',
+      StatusId: task.StatusId || '',
+      AssigneeId: task.AssigneeId || '',
+      Priority: task.Priority || '',
+      PriorityValue: task.Priority === 'High' ? 1 : (task.Priority === 'Medium' ? 2 : (task.Priority === 'Low' ? 3 : null)),
+      StartDate: task.StartDate ? task.StartDate.toISOString().split('T')[0] : '',
+      EndDate: task.EndDate ? task.EndDate.toISOString().split('T')[0] : '',
+      ProjectId: task.ProjectId || ''
+    });
+  } else {
+    const defaultStatusId = initialStatus?.id || (statuses[0]?.id) || '';
+    setFormData({
+      TaskName: '',
+      StatusId: defaultStatusId,
+      AssigneeId: '',
+      Priority: '',
+      PriorityValue: null,
+      StartDate: '',
+      EndDate: '',
+      ProjectId: ''
+    });
+  }
+}, [task, statuses, initialStatus]);
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));

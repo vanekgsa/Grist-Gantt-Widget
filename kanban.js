@@ -1,14 +1,13 @@
 const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedId, onUpdateStatus, onAddTask, onEditTask }) => {
   const [editingTask, setEditingTask] = React.useState(null);
   const [modalOpen, setModalOpen] = React.useState(false);
-  const [defaultStatus, setDefaultStatus] = React.useState(null);
+  const [initialStatusForModal, setInitialStatusForModal] = React.useState(null);
 
   const getColor = (statusText) => {
     const s = statuses.find(x => x.Status === statusText);
     return s?.Color || '#757575';
   };
 
-  // Группировка по проектам (свимлейны), внутри по статусам
   const groupByProjectAndStatus = () => {
     const allProjects = [{ id: null, Name: 'Без проекта' }, ...projects];
     const result = {};
@@ -36,7 +35,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
 
   const handleAddClick = (statusName) => {
     const statusObj = statuses.find(s => s.Status === statusName);
-    setDefaultStatus(statusObj);
+    setInitialStatusForModal(statusObj);
     setEditingTask(null);
     setModalOpen(true);
   };
@@ -46,19 +45,19 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
     setModalOpen(true);
   };
 
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setEditingTask(null);
+    setInitialStatusForModal(null);
+  };
+
   const handleSave = async (formData) => {
     if (editingTask) {
       await onEditTask(editingTask.id, formData);
     } else {
-      // Если создаётся новая задача и не выбран статус, используем defaultStatus
-      if (!formData.StatusId && defaultStatus) {
-        formData.StatusId = defaultStatus.id;
-      }
       await onAddTask(formData);
     }
-    setModalOpen(false);
-    setEditingTask(null);
-    setDefaultStatus(null);
+    handleCloseModal();
   };
 
   return React.createElement(React.Fragment, null, [
@@ -137,10 +136,11 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
       isOpen: modalOpen,
       task: editingTask,
       onSave: handleSave,
-      onClose: () => setModalOpen(false),
+      onClose: handleCloseModal,
       statuses: statuses,
       projects: projects,
-      users: users
+      users: users,
+      initialStatus: initialStatusForModal
     })
   ]);
 };

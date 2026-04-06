@@ -165,39 +165,38 @@ const ProjectWidget = () => {
 
   // Создание задачи
   const handleAddTask = async (taskData) => {
-    try {
-      const fields = {
-        TaskName: taskData.TaskName,
-        Status: taskData.StatusId,          // ID статуса
-        Project: taskData.ProjectId || null,
-        Assignee: taskData.AssigneeId || null,
-        Priority: taskData.PriorityValue || null,   // число 1,2,3
-        StartDate: taskData.StartDate || null,
-        EndDate: taskData.EndDate || null
-      };
-      await grist.docApi.addRecord("Tasks", fields);
-    } catch (e) {
-      setError('Ошибка создания: ' + e.message);
-    }
-  };
+  try {
+    const fields = {
+      TaskName: taskData.TaskName,
+      Status: taskData.StatusId,          // поле в таблице называется Status
+      Project: taskData.ProjectId || null,
+      Assignee: taskData.AssigneeId || null,
+      Priority: taskData.PriorityValue,   // поле Priority (целое число)
+      StartDate: taskData.StartDate || null,
+      EndDate: taskData.EndDate || null
+    };
+    await grist.docApi.addRecord("Tasks", fields);
+  } catch (e) {
+    setError('Ошибка создания: ' + e.message);
+  }
+};
 
-  // Редактирование задачи
-  const handleEditTask = async (taskId, updatedFields) => {
-    try {
-      const fields = {
-        TaskName: updatedFields.TaskName,
-        Status: updatedFields.StatusId,
-        Project: updatedFields.ProjectId || null,
-        Assignee: updatedFields.AssigneeId || null,
-        Priority: updatedFields.PriorityValue || null,
-        StartDate: updatedFields.StartDate || null,
-        EndDate: updatedFields.EndDate || null
-      };
-      await grist.selectedTable.update({ id: taskId, fields });
-    } catch (e) {
-      setError('Ошибка редактирования: ' + e.message);
-    }
-  };
+const handleEditTask = async (taskId, updatedFields) => {
+  try {
+    const fields = {
+      TaskName: updatedFields.TaskName,
+      Status: updatedFields.StatusId,
+      Project: updatedFields.ProjectId || null,
+      Assignee: updatedFields.AssigneeId || null,
+      Priority: updatedFields.PriorityValue,
+      StartDate: updatedFields.StartDate || null,
+      EndDate: updatedFields.EndDate || null
+    };
+    await grist.selectedTable.update({ id: taskId, fields });
+  } catch (e) {
+    setError('Ошибка редактирования: ' + e.message);
+  }
+};
 
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
