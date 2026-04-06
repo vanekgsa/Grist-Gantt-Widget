@@ -6,8 +6,8 @@ const ProjectWidget = () => {
   const [statuses, setStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [debug, setDebug] = useState(''); // Debug info
   const [draggedId, setDraggedId] = useState(null);
-  const dataReceived = useRef(false);
 
   useEffect(() => {
     grist.ready({
@@ -24,11 +24,14 @@ const ProjectWidget = () => {
 
     const load = async () => {
       try {
-        // Load statuses first
+        setDebug('Loading statuses...');
+        
+        // Load statuses
         let s = [];
         try {
           const r = await grist.docApi.fetchTable("Status");
           s = columnsToRows(r).sort((a, b) => (a.Order || 0) - (b.Order || 0));
+          setDebug(prev => prev + '\nStatuses loaded: ' + s.length);
         } catch (e) {
           s = [
             { id: 1, Status: 'В ожидании', Color: '#9E9E9E', Order: 1 },
@@ -38,45 +41,69 @@ const ProjectWidget = () => {
             { id: 5, Status: 'Выполнено', Color: '#4CAF50', Order: 5 },
             { id: 6, Status: 'Отменено', Color: '#F44336', Order: 6 }
           ];
+          setDebug(prev => prev + '\nUsing default statuses');
         }
         setStatuses(s);
 
-        // CRITICAL: Fetch data immediately instead of waiting for onRecords
+        // Try to fetch data immediately
+        setDebug(prev => prev + '\nFetching selected table...');
         try {
           const data = await grist.selectedTable.fetchSelectedTable();
-          console.log('Initial fetch:', data);
+          setDebug(prev => prev + '\nFetch result: ' + JSON.stringify(data).substring(0, 200));
           
-          if (data && data.records && data.records.length > 0) {
-            dataReceived.current = true;
-            processData(data.records, s);
-          } else {
-            // No data yet, subscribe for updates
-            subscribeToRecords(s);
+          // Check what we got
+          if (data && data.records) {
+            setDebug(prev => prev + '\nRecords count: ' + data.records.length);
+            
+            // Try to map columns
+            const mapped = grist.mapColumnNames(data.records);
+            setDebug(prev => prev + '\nMapped result: ' + (mapped ? 'success' : 'null'));
+            
+            if (mapped) {
+              processAndSetData(mapped, s);
+              return; // Success, exit early
+            }
           }
         } catch (fetchErr) {
-          console.log('Fetch failed, subscribing:', fetchErr);
-          // If fetch fails (no mappings yet), subscribe to onRecords
-          subscribeToRecords(s);
+          setDebug(prev => prev + '\nFetch error: ' + fetchErr.message);
         }
 
+        // If fetch failed or returned no data, subscribe to onRecords
+        setDebug(prev => prev + '\nSubscribing to onRecords...');
+        
+        grist.onRecords((data, mappings) => {
+          setDebug(prev => prev + '\nonRecords fired! Data: ' + JSON.stringify(data).substring(0, 100));
+          setDebug(prev => prev + '\nMappings: ' + JSON.stringify(mappings));
+          
+          const mapped = grist.mapColumnNames(data);
+          setDebug(prev => prev + '\nmapColumnNames: ' + (mapped ? 'success' : 'null'));
+          
+          if (mapped) {
+            processAndSetData(mapped, s);
+          } else {
+            setError('Ошибка сопоставления колонок. Проверьте настройки виджета.');
+            setLoading(false);
+          }
+        }, { format: 'rows' });
+
+        // Timeout
+        setTimeout(() => {
+          setDebug(prev => prev + '\nTimeout reached, loading=' + loading);
+          setLoading(false);
+        }, 3000);
+
       } catch (e) {
+        setDebug(prev => prev + '\nCritical error: ' + e.message);
         setError('Ошибка: ' + e.message);
         setLoading(false);
       }
     };
 
-    // Helper to process data
-    const processData = (rows, s) => {
-      const mapped = grist.mapColumnNames(rows);
+    const processAndSetData = (data, s) => {
+      const rows = Array.isArray(data) ? data : [data];
+      setDebug(prev => prev + '\nProcessing ' + rows.length + ' rows');
       
-      if (!mapped) {
-        setError('Настройте колонки в опциях виджета');
-        setLoading(false);
-        return;
-      }
-
-      const processed = Array.isArray(mapped) ? mapped : [mapped];
-      setRecords(processed.map(r => {
+      setRecords(rows.map(r => {
         let sid = null, st = '';
         if (r.Status && typeof r.Status === 'object') {
           sid = r.Status.id || r.Status.Id;
@@ -104,24 +131,6 @@ const ProjectWidget = () => {
       setLoading(false);
     };
 
-    // Subscribe to updates
-    const subscribeToRecords = (s) => {
-      grist.onRecords((data) => {
-        console.log('onRecords fired:', data);
-        dataReceived.current = true;
-        const rows = Array.isArray(data) ? data : [data];
-        processData(rows, s);
-      }, { format: 'rows' });
-
-      // Timeout for initial load
-      setTimeout(() => {
-        if (!dataReceived.current) {
-          console.log('No data after timeout');
-          setLoading(false);
-        }
-      }, 2000);
-    };
-
     load();
   }, []);
 
@@ -143,8 +152,37 @@ const ProjectWidget = () => {
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  // Show config UI only if no data and not loading
-  if (!dataReceived.current && !loading && records.length === 0) {
+  // Show debug info while loading
+  if (loading) {
+    return React.createElement('div', { className: 'loading' }, [
+      React.createElement('div', { key: 'text' }, 'Загрузка...'),
+      React.createElement('pre', { 
+        key: 'debug', 
+        style: { 
+          fontSize: '10px', 
+          marginTop: '20px', 
+          textAlign: 'left',
+          maxWidth: '800px',
+          whiteSpace: 'pre-wrap',
+          background: '#f5f5f5',
+          padding: '10px'
+        } 
+      }, debug || 'Initializing...')
+    ]);
+  }
+
+  if (error) {
+    return React.createElement('div', { className: 'error' }, [
+      error,
+      React.createElement('pre', { 
+        key: 'debug',
+        style: { fontSize: '10px', marginTop: '10px', whiteSpace: 'pre-wrap' }
+      }, debug)
+    ]);
+  }
+
+  // If no records but not loading, show config UI
+  if (records.length === 0) {
     return React.createElement('div', {
       style: {
         padding: '40px',
@@ -170,7 +208,8 @@ const ProjectWidget = () => {
           padding: '20px', 
           borderRadius: '8px',
           display: 'inline-block',
-          textAlign: 'left'
+          textAlign: 'left',
+          marginBottom: '20px'
         }
       }, [
         React.createElement('ol', { style: { margin: 0, paddingLeft: '20px', color: '#333' } }, [
@@ -184,12 +223,13 @@ const ProjectWidget = () => {
             'Укажите соответствие колонок: Task Name, Status, Start Date, End Date'
           )
         ])
-      ])
+      ]),
+      React.createElement('pre', { 
+        key: 'debug',
+        style: { fontSize: '10px', textAlign: 'left', background: '#eee', padding: '10px' }
+      }, debug || 'No debug info')
     ]);
   }
-
-  if (loading) return React.createElement('div', { className: 'loading' }, 'Загрузка...');
-  if (error) return React.createElement('div', { className: 'error' }, error);
 
   return React.createElement('div', { className: 'widget-container' }, [
     React.createElement('div', { key: 'toolbar', className: 'toolbar' }, [
