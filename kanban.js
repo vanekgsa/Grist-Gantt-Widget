@@ -2,6 +2,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
   const [editingTask, setEditingTask] = React.useState(null);
   const [modalOpen, setModalOpen] = React.useState(false);
   const [initialStatusForModal, setInitialStatusForModal] = React.useState(null);
+  const [collapsedProjects, setCollapsedProjects] = React.useState({});
 
   const getColor = (statusText) => {
     const s = statuses.find(x => x.Status === statusText);
@@ -9,7 +10,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
   };
 
   const groupByProjectAndStatus = () => {
-    const allProjects = [{ id: null, Name: 'Без проекта' }, ...projects];
+    const allProjects = [...projects, { id: null, Name: 'Без проекта' }];
     const result = {};
     allProjects.forEach(proj => {
       result[proj.Name] = {};
@@ -32,6 +33,10 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
   };
 
   const grouped = groupByProjectAndStatus();
+
+  const toggleProject = (projectName) => {
+    setCollapsedProjects(prev => ({ ...prev, [projectName]: !prev[projectName] }));
+  };
 
   const handleAddClick = (statusName) => {
     const statusObj = statuses.find(s => s.Status === statusName);
@@ -64,8 +69,21 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
     React.createElement('div', { key: 'kanban', className: 'kanban-board' },
       Object.entries(grouped).map(([projectName, statusGroups]) =>
         React.createElement('div', { key: projectName, className: 'kanban-swimlane' }, [
-          React.createElement('div', { key: 'header', className: 'swimlane-header' }, projectName),
-          React.createElement('div', { key: 'columns', className: 'swimlane-columns', style: { display: 'flex', gap: '20px', overflowX: 'auto', padding: '16px' } },
+          React.createElement('div', {
+            key: 'header',
+            className: 'swimlane-header',
+            style: { cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+            onClick: () => toggleProject(projectName)
+          }, [
+            React.createElement('span', { key: 'title' }, [
+              React.createElement('span', { key: 'icon' }, collapsedProjects[projectName] ? '▶ ' : '▼ '),
+              projectName
+            ]),
+            React.createElement('span', { key: 'count', style: { fontSize: '12px', background: '#ddd', padding: '2px 8px', borderRadius: '12px' } },
+              Object.values(statusGroups).reduce((sum, tasks) => sum + tasks.length, 0)
+            )
+          ]),
+          !collapsedProjects[projectName] && React.createElement('div', { key: 'columns', className: 'swimlane-columns', style: { display: 'flex', gap: '20px', overflowX: 'auto', padding: '16px' } },
             Object.entries(statusGroups).map(([status, tasks]) =>
               React.createElement('div', {
                 key: status,
@@ -90,7 +108,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
                     React.createElement('span', { key: 'count', className: 'column-count', style: { background: 'rgba(0,0,0,0.1)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' } }, tasks.length),
                     React.createElement('button', {
                       key: 'add',
-                      onClick: () => handleAddClick(status),
+                      onClick: (e) => { e.stopPropagation(); handleAddClick(status); },
                       style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#666', padding: '0 4px' },
                       title: 'Добавить задачу'
                     }, '+')

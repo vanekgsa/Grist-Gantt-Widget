@@ -11,9 +11,8 @@ const ProjectWidget = () => {
   const [draggedId, setDraggedId] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   
-  const timeoutRef = useRef(null);
   const dataReceived = useRef(false);
-  const isSubscribed = useRef(false);
+  const timeoutRef = useRef(null);
 
   // Загрузка справочников
   useEffect(() => {
@@ -51,11 +50,21 @@ const ProjectWidget = () => {
     loadReferences();
   }, []);
 
-  // Подписка на данные (только после загрузки справочников)
-  const subscribeToData = () => {
-    if (isSubscribed.current) return;
-    isSubscribed.current = true;
-    
+  // Инициализация виджета и подписка на данные
+  useEffect(() => {
+    grist.ready({
+      columns: [
+        { name: "TaskName", title: "Task Name" },
+        { name: "Status", title: "Status" },
+        { name: "StartDate", title: "Start Date" },
+        { name: "EndDate", title: "End Date" },
+        { name: "Assignee", title: "Assignee", optional: true },
+        { name: "Priority", title: "Priority", optional: true },
+        { name: "Project", title: "Project", optional: true }
+      ],
+      requiredAccess: "full"
+    });
+
     grist.onRecords((data) => {
       console.log("onRecords:", data);
       dataReceived.current = true;
@@ -73,7 +82,7 @@ const ProjectWidget = () => {
       const newRecords = rows.map(r => {
         // Статус
         let statusId = null, statusText = "";
-        if (r.Status && typeof r.Status === "object") {
+        if (r.Status && typeof r.Status === "object" && !(r.Status instanceof Date)) {
           statusId = r.Status.id;
           statusText = r.Status.Status || r.Status.Name || "";
         } else if (typeof r.Status === "number") {
@@ -86,9 +95,9 @@ const ProjectWidget = () => {
           statusId = found ? found.id : null;
         }
         
-        // Проект (ссылка)
+        // Проект
         let projectId = null, projectName = "";
-        if (r.Project && typeof r.Project === "object") {
+        if (r.Project && typeof r.Project === "object" && !(r.Project instanceof Date)) {
           projectId = r.Project.id;
           projectName = r.Project.Name || "";
         } else if (typeof r.Project === "number") {
@@ -101,11 +110,16 @@ const ProjectWidget = () => {
           projectId = found ? found.id : null;
         }
         
-        // Исполнитель (ссылка)
+        // Исполнитель (с защитой от ошибок)
         let assigneeId = null, assigneeName = "";
-        if (r.Assignee && typeof r.Assignee === "object") {
-          assigneeId = r.Assignee.id;
-          assigneeName = r.Assignee.Name || "";
+        if (r.Assignee && typeof r.Assignee === "object" && !(r.Assignee instanceof Date)) {
+          if (r.Assignee.name === "InvalidTypedValue" || r.Assignee.message === "Ref") {
+            assigneeId = null;
+            assigneeName = "";
+          } else {
+            assigneeId = r.Assignee.id;
+            assigneeName = r.Assignee.Name || "";
+          }
         } else if (typeof r.Assignee === "number") {
           assigneeId = r.Assignee;
           const found = users.find(u => u.id === assigneeId);
@@ -147,40 +161,16 @@ const ProjectWidget = () => {
       setShowConfig(false);
       setError(null);
     }, { format: "rows" });
-  };
 
-  // Инициализация виджета и запуск подписки после загрузки справочников
-  useEffect(() => {
-    grist.ready({
-      columns: [
-        { name: "TaskName", title: "Task Name" },
-        { name: "Status", title: "Status" },
-        { name: "StartDate", title: "Start Date" },
-        { name: "EndDate", title: "End Date" },
-        { name: "Assignee", title: "Assignee", optional: true },
-        { name: "Priority", title: "Priority", optional: true },
-        { name: "Project", title: "Project", optional: true }
-      ],
-      requiredAccess: "full"
-    });
-    
-    // Ждём загрузки справочников
-    const interval = setInterval(() => {
-      if (projects.length > 0 && users.length > 0 && statuses.length > 0) {
-        clearInterval(interval);
-        subscribeToData();
-      }
-    }, 100);
-    
     timeoutRef.current = setTimeout(() => {
       if (!dataReceived.current) {
+        console.log("No data received after 5s, showing config");
         setLoading(false);
         setShowConfig(true);
       }
     }, 5000);
-    
+
     return () => {
-      clearInterval(interval);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [projects, users, statuses]);
@@ -222,7 +212,6 @@ const ProjectWidget = () => {
     }
   };
 
-  // Изменение статуса (drag & drop)
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
     if (!status) {
@@ -243,17 +232,6 @@ const ProjectWidget = () => {
     const s = statuses.find(x => x.Status === statusText);
     return s?.Color || "#757575";
   };
-
-  // Уникальные проекты для свимлейнов
-  const projectList = useMemo(() => {
-    const map = new Map();
-    records.forEach(r => {
-      if (r.ProjectId && r.ProjectName) {
-        map.set(r.ProjectId, { id: r.ProjectId, Name: r.ProjectName });
-      }
-    });
-    return Array.from(map.values());
-  }, [records]);
 
   if (showConfig && !loading && records.length === 0 && !error) {
     return React.createElement("div", { style: { padding: "40px", textAlign: "center" } },
@@ -276,8 +254,12 @@ const ProjectWidget = () => {
     React.createElement("div", { key: "content", className: "main-content" },
       view === "kanban"
         ? React.createElement(KanbanView, {
-            records, statuses, projects: projectList, users,
-            draggedId, setDraggedId,
+            records,
+            statuses,
+            projects: projects,
+            users,
+            draggedId,
+            setDraggedId,
             onUpdateStatus: updateStatus,
             onAddTask: handleAddTask,
             onEditTask: handleEditTask
