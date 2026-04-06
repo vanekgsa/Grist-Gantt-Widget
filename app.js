@@ -7,10 +7,10 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
-  const [hasMapping, setHasMapping] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
   
-  const subscriptionActive = useRef(false);
-  const optionsReceived = useRef(false);
+  const timeoutRef = useRef(null);
+  const dataReceived = useRef(false);
 
   // Загрузка статусов (один раз)
   useEffect(() => {
@@ -20,7 +20,6 @@ const ProjectWidget = () => {
         const s = columnsToRows(r).sort((a, b) => (a.Order || 0) - (b.Order || 0));
         setStatuses(s);
       } catch (e) {
-        // Если таблицы Status нет – используем дефолтные
         setStatuses([
           { id: 1, Status: 'В ожидании', Color: '#9E9E9E', Order: 1 },
           { id: 2, Status: 'К выполнению', Color: '#607D8B', Order: 2 },
@@ -34,17 +33,32 @@ const ProjectWidget = () => {
     loadStatuses();
   }, []);
 
-  // Подписка на получение данных из Grist
-  const subscribeToRecords = () => {
-    if (subscriptionActive.current) return;
-    subscriptionActive.current = true;
-    
+  // Инициализация виджета и подписка на данные
+  useEffect(() => {
+    grist.ready({
+      columns: [
+        { name: 'TaskName', title: 'Task Name' },
+        { name: 'Status', title: 'Status' },
+        { name: 'StartDate', title: 'Start Date' },
+        { name: 'EndDate', title: 'End Date' },
+        { name: 'Assignee', title: 'Assignee', optional: true },
+        { name: 'Priority', title: 'Priority', optional: true }
+      ],
+      requiredAccess: 'full'
+    });
+
+    // Подписываемся на данные
     grist.onRecords((data) => {
       console.log('onRecords received:', data);
+      dataReceived.current = true;
+      
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      
       const mapped = grist.mapColumnNames(data);
       if (!mapped) {
         setError('Не удалось сопоставить колонки. Проверьте настройки виджета.');
         setLoading(false);
+        setShowConfig(true);
         return;
       }
       
@@ -76,59 +90,25 @@ const ProjectWidget = () => {
       });
       setRecords(newRecords);
       setLoading(false);
+      setShowConfig(false);
       setError(null);
     }, { format: 'rows' });
-  };
 
-  // Инициализация виджета и подписка на события опций
-  useEffect(() => {
-    grist.ready({
-      columns: [
-        { name: 'TaskName', title: 'Task Name' },
-        { name: 'Status', title: 'Status' },
-        { name: 'StartDate', title: 'Start Date' },
-        { name: 'EndDate', title: 'End Date' },
-        { name: 'Assignee', title: 'Assignee', optional: true },
-        { name: 'Priority', title: 'Priority', optional: true }
-      ],
-      requiredAccess: 'full'
-    });
-
-    // Обработчик изменения опций (в том числе маппинга колонок)
-    const optionsHandler = (options) => {
-      console.log('Options event:', options);
-      optionsReceived.current = true;
-      const mapping = options?.columnsMapping;
-      const newMappingExists = mapping && Object.keys(mapping).length > 0;
-      
-      setHasMapping(newMappingExists);
-      
-      if (newMappingExists && !subscriptionActive.current) {
-        setError(null);
-        subscribeToRecords();
-      } else if (!newMappingExists) {
-        // Маппинг отсутствует или удалён – очищаем данные и показываем настройку
-        subscriptionActive.current = false;
-        setRecords([]);
+    // Таймаут: если через 5 секунд данных нет, показываем экран настройки
+    timeoutRef.current = setTimeout(() => {
+      if (!dataReceived.current) {
+        console.log('No data received after 5s, showing config screen');
         setLoading(false);
+        setShowConfig(true);
       }
+    }, 5000);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-    
-    grist.on('options', optionsHandler);
-    
-    // Таймаут на случай, если событие options не придёт (старая версия API или ошибка)
-    const timeout = setTimeout(() => {
-      if (!optionsReceived.current) {
-        console.log('Options event not received, assuming no mapping');
-        setHasMapping(false);
-        setLoading(false);
-      }
-    }, 2000);
-    
-    return () => clearTimeout(timeout);
-  }, []);
+  }, [statuses]); // переподписка при изменении статусов (чтобы в map использовались актуальные)
 
-  // Обновление статуса задачи (drag&drop в канбане)
+  // Обновление статуса задачи
   const updateStatus = async (taskId, newStatusText) => {
     const status = statuses.find(s => s.Status === newStatusText);
     if (!status) {
@@ -145,14 +125,13 @@ const ProjectWidget = () => {
     }
   };
 
-  // Цвет статуса для диаграммы Гантта
   const getStatusColor = (statusText) => {
     const s = statuses.find(x => x.Status === statusText);
     return s?.Color || '#757575';
   };
 
-  // Экран настройки (показывается, если нет маппинга, нет загрузки, нет ошибок и нет данных)
-  if (!hasMapping && !loading && records.length === 0 && !error) {
+  // Экран настройки (показывается, если нет данных и прошел таймаут)
+  if (showConfig && !loading && records.length === 0 && !error) {
     return React.createElement('div', {
       style: {
         padding: '40px',
