@@ -7,7 +7,7 @@ const ProjectWidget = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
-  const [hasMappings, setHasMappings] = useState(false); // Track if columns are mapped
+  const [columnMappings, setColumnMappings] = useState(null); // Store actual column mappings
 
   useEffect(() => {
     grist.ready({
@@ -22,14 +22,20 @@ const ProjectWidget = () => {
       requiredAccess: 'full'
     });
 
-    // Listen for mappings changes
+    // Listen for options/mappings changes
     grist.onOptions((options, mappings) => {
-      console.log('Mappings received:', mappings);
-      if (mappings && Object.keys(mappings).length > 0) {
-        setHasMappings(true);
+      console.log('onOptions fired:', { options, mappings });
+      
+      // Check if we have actual column mappings (not just accessLevel)
+      // mappings.columns contains the actual column mappings
+      const cols = mappings?.columns || options?.columnsMapping;
+      
+      if (cols && Object.keys(cols).length > 0) {
+        console.log('Column mappings found:', cols);
+        setColumnMappings(cols);
       } else {
-        setHasMappings(false);
-        setLoading(false); // Stop loading if no mappings
+        console.log('No column mappings yet');
+        setColumnMappings(null);
       }
     });
 
@@ -52,21 +58,20 @@ const ProjectWidget = () => {
         }
         setStatuses(s);
 
-        // Subscribe to records - this only fires when mappings exist
+        // Subscribe to records
         grist.onRecords((data, mappings) => {
-          console.log('onRecords fired:', data, mappings);
+          console.log('onRecords fired:', { data, mappings });
           
-          if (!mappings || Object.keys(mappings).length === 0) {
-            setHasMappings(false);
-            setLoading(false);
-            return;
+          // Check for column mappings in the mappings parameter
+          const cols = mappings?.columns;
+          if (cols && Object.keys(cols).length > 0) {
+            setColumnMappings(cols);
           }
-
-          setHasMappings(true);
+          
           const mapped = grist.mapColumnNames(data);
           
           if (!mapped) {
-            setError('Ошибка сопоставления колонок');
+            console.log('mapColumnNames returned null - mappings missing');
             setLoading(false);
             return;
           }
@@ -100,6 +105,18 @@ const ProjectWidget = () => {
           setLoading(false);
         }, { format: 'rows' });
 
+        // Set loading to false after a short delay if no data arrives
+        // This ensures we show the config UI if onRecords never fires
+        setTimeout(() => {
+          setLoading(prev => {
+            if (prev) {
+              console.log('Timeout: no data received, assuming no mappings');
+              return false; // Stop loading, show config UI
+            }
+            return prev;
+          });
+        }, 1000);
+
       } catch (e) {
         setError('Ошибка: ' + e.message);
         setLoading(false);
@@ -127,8 +144,8 @@ const ProjectWidget = () => {
 
   const getColor = (name) => statuses.find(s => s.Status === name)?.Color || '#757575';
 
-  // Show configuration needed UI
-  if (!hasMappings && !loading) {
+  // Show configuration needed UI when no column mappings
+  if (!columnMappings && !loading && records.length === 0) {
     return React.createElement('div', {
       style: {
         padding: '40px',
