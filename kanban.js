@@ -2,6 +2,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
   const [editingTask, setEditingTask] = React.useState(null);
   const [modalOpen, setModalOpen] = React.useState(false);
   const [initialStatusForModal, setInitialStatusForModal] = React.useState(null);
+  const [initialProjectForModal, setInitialProjectForModal] = React.useState(null);
   const [collapsedProjects, setCollapsedProjects] = React.useState({});
 
   const getColor = (statusText) => {
@@ -9,6 +10,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
     return s?.Color || '#757575';
   };
 
+  // Группировка: сначала по проектам, потом по статусам
   const groupByProjectAndStatus = () => {
     const allProjects = [...projects, { id: null, Name: 'Без проекта' }];
     const result = {};
@@ -33,14 +35,17 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
   };
 
   const grouped = groupByProjectAndStatus();
+  const projectNames = Object.keys(grouped);
 
   const toggleProject = (projectName) => {
     setCollapsedProjects(prev => ({ ...prev, [projectName]: !prev[projectName] }));
   };
 
-  const handleAddClick = (statusName) => {
+  const handleAddClick = (statusName, projectName) => {
     const statusObj = statuses.find(s => s.Status === statusName);
+    const projectObj = projects.find(p => p.Name === projectName) || null;
     setInitialStatusForModal(statusObj);
+    setInitialProjectForModal(projectObj);
     setEditingTask(null);
     setModalOpen(true);
   };
@@ -54,6 +59,7 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
     setModalOpen(false);
     setEditingTask(null);
     setInitialStatusForModal(null);
+    setInitialProjectForModal(null);
   };
 
   const handleSave = async (formData) => {
@@ -67,84 +73,48 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
 
   return React.createElement(React.Fragment, null, [
     React.createElement('div', { key: 'kanban', className: 'kanban-board' },
-      Object.entries(grouped).map(([projectName, statusGroups]) =>
-        React.createElement('div', { key: projectName, className: 'kanban-swimlane' }, [
-          React.createElement('div', {
-            key: 'header',
-            className: 'swimlane-header',
-            style: { cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-            onClick: () => toggleProject(projectName)
-          }, [
-            React.createElement('span', { key: 'title' }, [
-              React.createElement('span', { key: 'icon' }, collapsedProjects[projectName] ? '▶ ' : '▼ '),
-              projectName
-            ]),
-            React.createElement('span', { key: 'count', style: { fontSize: '12px', background: '#ddd', padding: '2px 8px', borderRadius: '12px' } },
-              Object.values(statusGroups).reduce((sum, tasks) => sum + tasks.length, 0)
-            )
+      // Заголовок колонок (статусы)
+      React.createElement('div', { key: 'headers', className: 'kanban-headers', style: { display: 'flex', marginLeft: '200px', borderBottom: '1px solid #e0e0e0' } },
+        statuses.map(status => 
+          React.createElement('div', { key: status.Status, className: 'kanban-header-cell', style: { flex: 1, minWidth: '250px', padding: '12px', fontWeight: 'bold', textAlign: 'center', borderBottom: `3px solid ${status.Color}` } }, status.Status)
+        )
+      ),
+      // Строки проектов
+      projectNames.map(projectName => 
+        !collapsedProjects[projectName] && React.createElement('div', { key: projectName, className: 'kanban-swimlane-row', style: { display: 'flex' } }, [
+          React.createElement('div', { key: 'label', className: 'swimlane-label', style: { width: '200px', flexShrink: 0, background: '#fafafa', borderBottom: '1px solid #e0e0e0', padding: '12px', fontWeight: 'bold', position: 'sticky', left: 0, cursor: 'pointer' }, onClick: () => toggleProject(projectName) }, [
+            React.createElement('span', null, collapsedProjects[projectName] ? '▶ ' : '▼ '),
+            projectName,
+            React.createElement('span', { style: { marginLeft: '8px', fontSize: '12px', color: '#666' } }, `(${Object.values(grouped[projectName]).reduce((sum, arr) => sum + arr.length, 0)})`)
           ]),
-          !collapsedProjects[projectName] && React.createElement('div', { key: 'columns', className: 'swimlane-columns', style: { display: 'flex', gap: '20px', overflowX: 'auto', padding: '16px' } },
-            Object.entries(statusGroups).map(([status, tasks]) =>
-              React.createElement('div', {
-                key: status,
-                className: 'kanban-column',
-                style: { minWidth: '280px', background: '#f8f9fa', borderRadius: '12px', display: 'flex', flexDirection: 'column', maxHeight: '100%' },
-                onDragOver: (e) => e.preventDefault(),
-                onDrop: (e) => {
-                  e.preventDefault();
-                  if (draggedId) onUpdateStatus(draggedId, status);
-                }
-              }, [
-                React.createElement('div', {
-                  key: 'header',
-                  className: 'column-header',
-                  style: { padding: '16px', fontWeight: '600', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `2px solid ${getColor(status)}` }
-                }, [
-                  React.createElement('span', { key: 'title' }, [
-                    React.createElement('span', { key: 'dot', className: 'status-badge', style: { backgroundColor: getColor(status), display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', marginRight: '6px' } }),
-                    status
-                  ]),
-                  React.createElement('div', { key: 'actions', style: { display: 'flex', alignItems: 'center', gap: '8px' } }, [
-                    React.createElement('span', { key: 'count', className: 'column-count', style: { background: 'rgba(0,0,0,0.1)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' } }, tasks.length),
-                    React.createElement('button', {
-                      key: 'add',
-                      onClick: (e) => { e.stopPropagation(); handleAddClick(status); },
-                      style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#666', padding: '0 4px' },
-                      title: 'Добавить задачу'
-                    }, '+')
-                  ])
-                ]),
-                React.createElement('div', { key: 'tasks', className: 'kanban-tasks', style: { flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' } },
-                  tasks.length === 0
-                    ? React.createElement('div', { className: 'empty-state', style: { textAlign: 'center', padding: '40px 20px', color: '#999', fontStyle: 'italic' } }, 'Перетащите задачи сюда')
-                    : tasks.map(task =>
-                        React.createElement('div', {
-                          key: task.id,
-                          className: 'kanban-card',
-                          draggable: true,
-                          style: { background: 'white', padding: '14px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', cursor: 'grab', borderLeft: `4px solid ${getColor(task.StatusText)}` },
-                          onDragStart: () => setDraggedId(task.id),
-                          onDragEnd: () => setDraggedId(null),
-                          onClick: (e) => {
-                            e.stopPropagation();
-                            handleEditClick(task);
-                          }
-                        }, [
-                          React.createElement('div', { key: 'title', className: 'card-title', style: { fontWeight: '600', marginBottom: '8px', color: '#333' } }, task.TaskName),
-                          React.createElement('div', { key: 'meta', className: 'card-meta', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#666' } }, [
-                            React.createElement('span', { key: 'assignee' }, task.AssigneeName || 'Не назначен'),
-                            task.Priority && React.createElement('span', {
-                              key: 'priority',
-                              className: `priority-${task.Priority.toLowerCase()}`,
-                              style: { padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600' }
-                            }, task.Priority === 'High' ? 'Высокий' : (task.Priority === 'Medium' ? 'Средний' : 'Низкий'))
-                          ]),
-                          task.StartDate && React.createElement('div', { key: 'dates', className: 'card-dates', style: { marginTop: '8px', fontSize: '11px', color: '#888' } }, `${task.StartDateStr} — ${task.EndDateStr}`)
-                        ])
-                      )
+          React.createElement('div', { key: 'cells', className: 'swimlane-cells', style: { display: 'flex', flex: 1 } },
+            statuses.map(status => {
+              const tasks = grouped[projectName][status.Status] || [];
+              return React.createElement('div', { key: status.Status, className: 'kanban-cell', style: { flex: 1, minWidth: '250px', background: '#fefefe', borderLeft: '1px solid #e0e0e0', borderBottom: '1px solid #e0e0e0', padding: '8px' } }, [
+                React.createElement('div', { key: 'add', style: { textAlign: 'right', marginBottom: '8px' } },
+                  React.createElement('button', { onClick: () => handleAddClick(status.Status, projectName), style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666' } }, '+')
+                ),
+                React.createElement('div', { key: 'tasks', className: 'kanban-tasks', style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                  tasks.map(task =>
+                    React.createElement('div', {
+                      key: task.id,
+                      className: 'kanban-card',
+                      draggable: true,
+                      style: { background: 'white', padding: '10px', borderRadius: '6px', boxShadow: '0 1px 2px rgba(0,0,0,0.1)', cursor: 'grab', borderLeft: `4px solid ${getColor(task.StatusText)}` },
+                      onDragStart: () => setDraggedId(task.id),
+                      onDragEnd: () => setDraggedId(null),
+                      onClick: () => handleEditClick(task)
+                    }, [
+                      React.createElement('div', { key: 'title', style: { fontWeight: '500', marginBottom: '6px' } }, task.TaskName),
+                      React.createElement('div', { key: 'meta', style: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#666' } }, [
+                        React.createElement('span', null, task.AssigneeName || '—'),
+                        task.Priority && React.createElement('span', { className: `priority-${task.Priority.toLowerCase()}` }, task.Priority === 'High' ? '!' : (task.Priority === 'Medium' ? '‼' : '↓'))
+                      ])
+                    ])
+                  )
                 )
-              ])
-            )
+              ]);
+            })
           )
         ])
       )
@@ -158,7 +128,8 @@ const KanbanView = ({ records, statuses, projects, users, draggedId, setDraggedI
       statuses: statuses,
       projects: projects,
       users: users,
-      initialStatus: initialStatusForModal
+      initialStatus: initialStatusForModal,
+      initialProject: initialProjectForModal
     })
   ]);
 };

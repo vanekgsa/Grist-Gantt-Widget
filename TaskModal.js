@@ -1,4 +1,4 @@
-const TaskModal = ({ isOpen, task, onSave, onClose, statuses, projects, users, initialStatus }) => {
+const TaskModal = ({ isOpen, task, onSave, onClose, statuses, projects, users, initialStatus, initialProject }) => {
   const [formData, setFormData] = React.useState({
     TaskName: '',
     StatusId: '',
@@ -24,6 +24,7 @@ const TaskModal = ({ isOpen, task, onSave, onClose, statuses, projects, users, i
       });
     } else {
       const defaultStatusId = initialStatus?.id || (statuses[0]?.id) || '';
+      const defaultProjectId = initialProject?.id || '';
       setFormData({
         TaskName: '',
         StatusId: defaultStatusId,
@@ -32,10 +33,10 @@ const TaskModal = ({ isOpen, task, onSave, onClose, statuses, projects, users, i
         PriorityValue: null,
         StartDate: '',
         EndDate: '',
-        ProjectId: ''
+        ProjectId: defaultProjectId
       });
     }
-  }, [task, statuses, initialStatus]);
+  }, [task, statuses, initialStatus, initialProject]);
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
